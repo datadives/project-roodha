@@ -1,0 +1,7 @@
+{
+  "S3BucketStack": {
+    "BucketName": "jobwork-app-files-dev",
+    "AppLambdaRoleArn": "arn:aws:iam::320342891122:role/S3BucketStack-AppLambdaRoleEC2AB6BB-gCI1n8x7oK3c",
+    "AppEc2RoleArn": "arn:aws:iam::320342891122:role/S3BucketStack-AppEc2RoleA5C560A3-LzKyWG1xYkUE"
+  }
+}

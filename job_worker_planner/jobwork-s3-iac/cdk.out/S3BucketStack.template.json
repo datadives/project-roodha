@@ -1,0 +1,404 @@
+{
+ "Resources": {
+  "AppFilesBucket4483995E": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "BucketName": "jobwork-app-files-dev",
+    "CorsConfiguration": {
+     "CorsRules": [
+      {
+       "AllowedHeaders": [
+        "*"
+       ],
+       "AllowedMethods": [
+        "GET",
+        "PUT",
+        "HEAD"
+       ],
+       "AllowedOrigins": [
+        "*"
+       ],
+       "MaxAge": 3000
+      }
+     ]
+    },
+    "LifecycleConfiguration": {
+     "Rules": [
+      {
+       "ExpirationInDays": 365,
+       "Id": "transition-to-ia",
+       "Prefix": "",
+       "Status": "Enabled",
+       "Transitions": [
+        {
+         "StorageClass": "STANDARD_IA",
+         "TransitionInDays": 30
+        }
+       ]
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    },
+    "VersioningConfiguration": {
+     "Status": "Enabled"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "S3BucketStack/AppFilesBucket/Resource"
+   }
+  },
+  "AppFilesBucketPolicyB3888AF7": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "AppFilesBucket4483995E"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "AppFilesBucket4483995E",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "AppFilesBucket4483995E",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "S3BucketStack/AppFilesBucket/Policy/Resource"
+   }
+  },
+  "AppLambdaRoleEC2AB6BB": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "Role for Lambda functions to access the jobwork app files S3 bucket."
+   },
+   "Metadata": {
+    "aws:cdk:path": "S3BucketStack/AppLambdaRole/Resource"
+   }
+  },
+  "AppLambdaRoleDefaultPolicy876E6502": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:ListBucket",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "AppFilesBucket4483995E",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:PutObject"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "AppFilesBucket4483995E",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "AppFilesBucket4483995E",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "AppFilesBucket4483995E",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "AppLambdaRoleDefaultPolicy876E6502",
+    "Roles": [
+     {
+      "Ref": "AppLambdaRoleEC2AB6BB"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "S3BucketStack/AppLambdaRole/DefaultPolicy/Resource"
+   }
+  },
+  "AppEc2RoleA5C560A3": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ec2.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "Role for EC2 instances to access the jobwork app files S3 bucket."
+   },
+   "Metadata": {
+    "aws:cdk:path": "S3BucketStack/AppEc2Role/Resource"
+   }
+  },
+  "AppEc2RoleDefaultPolicyEAC98706": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:ListBucket",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "AppFilesBucket4483995E",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:PutObject"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "AppFilesBucket4483995E",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "AppFilesBucket4483995E",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "AppFilesBucket4483995E",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "AppEc2RoleDefaultPolicyEAC98706",
+    "Roles": [
+     {
+      "Ref": "AppEc2RoleA5C560A3"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "S3BucketStack/AppEc2Role/DefaultPolicy/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/+1TTWvjMBD9LZ1jUbxt07345rahLfQjxNlTCEUeTRptZMlIclNj/N8X2Va6S6AsC8te9iKh90bz5s1IF8nF+dfk7ITv3QTFbqJkkbS557hjfO9eWjdN2qsad+RXLRTK4G5eF0pihkjOQQqnwKDoA554SSOAxjpIVy1wpcyexCP5rREBgtvZEhjMv4X1bpbdwJrFqGcrX6WOSUfwjrggG8GSv2evg0q3ZkAabVN5aTSkkE9fHrOn7HZ2A4HZGIuU5w+QelsTA0uleeNqbpTEBlIQ5Lw1DTB4I+uk0SSG0I61wIW4NtYtakV/3QfrkVNYj8IPckPYoKKDOmleqFgeAynGLJWljXwfD95y7WTohRv7063Z9UYP02PDNrgPo+yPsZGHsIHvmORl0i6MouDdubokcdVA2kJlpUZZcZUhmlr7aLKPCRcyHMfROxPk0MrqJ6i3uDRxDKu2W3+AMfkR6z3H7b1WUtOBO7TsU/IPxD5n/3cjsv27CS7Z+KyC+VjB0gTmqLBjWIjcc08lae9+kf1t+N/I9u7H/9KxBTlTW6RV/MyBfa59VfuOzRu/NfrLNDm/TM5OvjspJ7bWXpaULIb9B34+bJiHBQAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "S3BucketStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "BucketName": {
+   "Description": "S3 bucket name for app files",
+   "Value": {
+    "Ref": "AppFilesBucket4483995E"
+   }
+  },
+  "AppLambdaRoleArn": {
+   "Description": "IAM role ARN for Lambda to access bucket",
+   "Value": {
+    "Fn::GetAtt": [
+     "AppLambdaRoleEC2AB6BB",
+     "Arn"
+    ]
+   }
+  },
+  "AppEc2RoleArn": {
+   "Description": "IAM role ARN for EC2 to access bucket",
+   "Value": {
+    "Fn::GetAtt": [
+     "AppEc2RoleA5C560A3",
+     "Arn"
+    ]
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
