@@ -1,21 +1,21 @@
-# JobWork Planner – DynamoDB Infrastructure (IaC)
+# Task 1 – DynamoDB Multi-Tenant Tables (IaC)
 
 ## Overview
-This module provisions the **core DynamoDB tables** required for the JobWork Planner application using **AWS CDK (Python)**.
+This task provisions the **initial DynamoDB tables** required for the JobWork Planner application using **Infrastructure as Code (AWS CDK – Python)**.
 
-The goal of this task is to:
-- Ensure consistent infrastructure across environments
-- Support a **multi-tenant SaaS architecture**
-- Manage AWS resources using **Infrastructure as Code (IaC)**
+The objective is to ensure:
+- Consistent infrastructure across environments
+- A clean **multi-tenant SaaS design**
+- Production-ready, scalable database setup
 
 ---
 
 ## Why DynamoDB?
-DynamoDB is used because:
-- The application is **multi-tenant by design**
-- Access patterns are key-based (tenant → users)
-- It provides automatic scaling and high availability
-- PAY_PER_REQUEST mode removes capacity planning overhead
+DynamoDB was chosen because:
+- The application is **multi-tenant**
+- Data access is key-based (tenant → users)
+- It scales automatically
+- PAY_PER_REQUEST billing removes capacity planning
 
 ---
 
@@ -29,12 +29,12 @@ Stores factory / company level information.
 
 **Attributes**
 - `name` – tenant name
-- `code` – short readable identifier (e.g. `DD-DEMO`)
+- `code` – short readable code (e.g. `DD-DEMO`)
 - `created_at` – creation timestamp
 
-**Design Notes**
-- Acts as the root entity for multi-tenancy
-- Schema follows DynamoDB best practices (minimal key definition)
+**Purpose**
+- Root entity for multi-tenancy
+- Every factory/company is represented as one tenant
 
 ---
 
@@ -53,43 +53,49 @@ Stores users belonging to a tenant.
 - `created_at`
 - `updated_at`
 
-**Design Notes**
-- All users of a tenant are grouped using `tenant_id`
-- Enables efficient queries like fetching all users of a tenant
-- Supports strong tenant isolation
+**Purpose**
+- Groups users under a tenant
+- Enables efficient queries like:
+  - “Get all users for a tenant”
+- Ensures strict tenant isolation
 
 ---
 
-## Infrastructure Design
+## Multi-Tenancy Design
+- Every record is scoped by `tenant_id`
+- Application logic ensures users can only access their tenant’s data
+- Design supports future scaling without schema changes
 
+---
+
+## Infrastructure Details
 - **IaC Tool:** AWS CDK (Python)
 - **Billing Mode:** PAY_PER_REQUEST
 - **Removal Policy:** DESTROY (development only)
 
-⚠️ In production, the removal policy will be changed to `RETAIN` to avoid data loss.
+⚠️ In production, removal policy will be changed to `RETAIN`.
 
 ---
 
 ## Project Structure
-
-# JobWork Planner – DynamoDB Infrastructure (IaC)
+# Task 1 – DynamoDB Multi-Tenant Tables (IaC)
 
 ## Overview
-This module provisions the **core DynamoDB tables** required for the JobWork Planner application using **AWS CDK (Python)**.
+This task provisions the **initial DynamoDB tables** required for the JobWork Planner application using **Infrastructure as Code (AWS CDK – Python)**.
 
-The goal of this task is to:
-- Ensure consistent infrastructure across environments
-- Support a **multi-tenant SaaS architecture**
-- Manage AWS resources using **Infrastructure as Code (IaC)**
+The objective is to ensure:
+- Consistent infrastructure across environments
+- A clean **multi-tenant SaaS design**
+- Production-ready, scalable database setup
 
 ---
 
 ## Why DynamoDB?
-DynamoDB is used because:
-- The application is **multi-tenant by design**
-- Access patterns are key-based (tenant → users)
-- It provides automatic scaling and high availability
-- PAY_PER_REQUEST mode removes capacity planning overhead
+DynamoDB was chosen because:
+- The application is **multi-tenant**
+- Data access is key-based (tenant → users)
+- It scales automatically
+- PAY_PER_REQUEST billing removes capacity planning
 
 ---
 
@@ -103,12 +109,12 @@ Stores factory / company level information.
 
 **Attributes**
 - `name` – tenant name
-- `code` – short readable identifier (e.g. `DD-DEMO`)
+- `code` – short readable code (e.g. `DD-DEMO`)
 - `created_at` – creation timestamp
 
-**Design Notes**
-- Acts as the root entity for multi-tenancy
-- Schema follows DynamoDB best practices (minimal key definition)
+**Purpose**
+- Root entity for multi-tenancy
+- Every factory/company is represented as one tenant
 
 ---
 
@@ -127,65 +133,69 @@ Stores users belonging to a tenant.
 - `created_at`
 - `updated_at`
 
-**Design Notes**
-- All users of a tenant are grouped using `tenant_id`
-- Enables efficient queries like fetching all users of a tenant
-- Supports strong tenant isolation
+**Purpose**
+- Groups users under a tenant
+- Enables efficient queries like:
+  - “Get all users for a tenant”
+- Ensures strict tenant isolation
 
 ---
 
-## Infrastructure Design
+## Multi-Tenancy Design
+- Every record is scoped by `tenant_id`
+- Application logic ensures users can only access their tenant’s data
+- Design supports future scaling without schema changes
 
+---
+
+## Infrastructure Details
 - **IaC Tool:** AWS CDK (Python)
 - **Billing Mode:** PAY_PER_REQUEST
 - **Removal Policy:** DESTROY (development only)
 
-⚠️ In production, the removal policy will be changed to `RETAIN` to avoid data loss.
+⚠️ In production, removal policy will be changed to `RETAIN`.
 
 ---
 
 ## Project Structure
-
 cdk-demo/
-├── app.py # CDK app entry point
-├── dynamodb_stack.py # DynamoDB table definitions
+├── app.py
+├── dynamodb_stack.py
 ├── cdk.json
 ├── requirements.txt
 └── README.md
+
+
+
+
+
 ---
 
-## Deployment
-
-### Prerequisites
-- AWS CLI configured
-- AWS CDK installed
-- Python 3.x
-
-### Commands
+## Deployment Commands
 ```bash
 cdk bootstrap
 cdk synth
 cdk deploy
 
-Multi-Tenancy Strategy
 
-Every record is scoped by tenant_id
+---
 
-Application logic ensures users access only their tenant’s data
+Verification
 
-Design supports future scaling without schema changes
+Tables verified using AWS CLI
 
+Key schema validated
 
+Sample items inserted and scanned successfully
 
 Status
 
-✅ Infrastructure created using IaC
-✅ Tables deployed and verified using AWS CLI
-✅ Design reviewed for scalability and security
+✅ DynamoDB tables created using IaC
+✅ Multi-tenant design verified
+✅ Ready for application integration
 
 Author
 
 Roshan Sah
-Intern – JobWork Planner
+Software / Cloud Engineering Intern
 2025
-
