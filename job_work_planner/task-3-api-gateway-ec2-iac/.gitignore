@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+ 
+# Virtual environments
+.venv/
+env/
+ 
+# CDK
+cdk.out/
+cdk.context.json
+ 
+# OS
+.DS_Store
+Thumbs.db
+ 
+# Logs
+*.log
