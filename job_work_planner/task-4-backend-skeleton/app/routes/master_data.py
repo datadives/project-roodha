@@ -13,6 +13,8 @@ from app.schemas import (
     PartUpdate,
     ShiftCreate,
     ShiftUpdate,
+    WorkerCreate,
+    WorkerUpdate,
 )
 
 router = APIRouter(prefix="/master-data", tags=["Master Data"])
@@ -36,13 +38,14 @@ def _serialize_customer(customer) -> dict:
     }
 
 
-def _serialize_machine(machine) -> dict:
+def _serialize_machine(machine, db: Session) -> dict:
     return {
         "machine_id": machine.machine_id,
         "tenant_id": machine.tenant_id,
         "name": machine.name,
         "type": machine.type,
         "is_active": machine.is_active,
+        "has_active_jobs": service.machine_has_active_jobs(db, machine.tenant_id, machine.machine_id),
     }
 
 
@@ -63,6 +66,16 @@ def _serialize_part(part) -> dict:
         "part_number": part.part_number,
         "customer_id": part.customer_id,
         "default_operations_route": part.default_operations_route,
+    }
+
+
+def _serialize_worker(worker) -> dict:
+    return {
+        "worker_id": worker.worker_id,
+        "tenant_id": worker.tenant_id,
+        "name": worker.name,
+        "role": worker.role,
+        "is_active": worker.is_active,
     }
 
 
@@ -103,25 +116,25 @@ def delete_customer(customer_id: str, request: Request, db: Session = Depends(ge
 @router.post("/machines", status_code=status.HTTP_201_CREATED)
 def create_machine(payload: MachineCreate, request: Request, db: Session = Depends(get_db)):
     machine = service.create_machine(db, _tenant_id_from_request(request), payload)
-    return api_success(_serialize_machine(machine), message="Machine created")
+    return api_success(_serialize_machine(machine, db), message="Machine created")
 
 
 @router.get("/machines")
 def list_machines(request: Request, db: Session = Depends(get_db)):
     machines = service.list_machines(db, _tenant_id_from_request(request))
-    return api_success([_serialize_machine(machine) for machine in machines])
+    return api_success([_serialize_machine(machine, db) for machine in machines])
 
 
 @router.get("/machines/{machine_id}")
 def get_machine(machine_id: str, request: Request, db: Session = Depends(get_db)):
     machine = service.get_machine(db, _tenant_id_from_request(request), machine_id)
-    return api_success(_serialize_machine(machine))
+    return api_success(_serialize_machine(machine, db))
 
 
 @router.patch("/machines/{machine_id}")
 def update_machine(machine_id: str, payload: MachineUpdate, request: Request, db: Session = Depends(get_db)):
     machine = service.update_machine(db, _tenant_id_from_request(request), machine_id, payload)
-    return api_success(_serialize_machine(machine), message="Machine updated")
+    return api_success(_serialize_machine(machine, db), message="Machine updated")
 
 
 @router.delete("/machines/{machine_id}")
@@ -158,6 +171,40 @@ def update_shift(shift_id: str, payload: ShiftUpdate, request: Request, db: Sess
 def delete_shift(shift_id: str, request: Request, db: Session = Depends(get_db)):
     result = service.delete_shift(db, _tenant_id_from_request(request), shift_id)
     return api_success(result, message="Shift deleted")
+
+
+@router.post("/workers", status_code=status.HTTP_201_CREATED)
+def create_worker(payload: WorkerCreate, request: Request, db: Session = Depends(get_db)):
+    worker = service.create_worker(db, _tenant_id_from_request(request), payload)
+    return api_success(_serialize_worker(worker), message="Worker created")
+
+
+@router.get("/workers")
+def list_workers(
+    request: Request,
+    include_inactive: bool = Query(True, description="Set false to show only active workers"),
+    db: Session = Depends(get_db),
+):
+    workers = service.list_workers(db, _tenant_id_from_request(request), include_inactive=include_inactive)
+    return api_success([_serialize_worker(worker) for worker in workers])
+
+
+@router.get("/workers/{worker_id}")
+def get_worker(worker_id: str, request: Request, db: Session = Depends(get_db)):
+    worker = service.get_worker(db, _tenant_id_from_request(request), worker_id)
+    return api_success(_serialize_worker(worker))
+
+
+@router.patch("/workers/{worker_id}")
+def update_worker(worker_id: str, payload: WorkerUpdate, request: Request, db: Session = Depends(get_db)):
+    worker = service.update_worker(db, _tenant_id_from_request(request), worker_id, payload)
+    return api_success(_serialize_worker(worker), message="Worker updated")
+
+
+@router.delete("/workers/{worker_id}")
+def delete_worker(worker_id: str, request: Request, db: Session = Depends(get_db)):
+    result = service.delete_worker(db, _tenant_id_from_request(request), worker_id)
+    return api_success(result, message="Worker deleted")
 
 
 @router.post("/parts", status_code=status.HTTP_201_CREATED)

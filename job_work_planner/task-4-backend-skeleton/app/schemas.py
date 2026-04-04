@@ -82,6 +82,28 @@ class ShiftResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WorkerCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    role: str = Field(..., min_length=1, max_length=255)
+    is_active: bool = True
+
+
+class WorkerUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    role: str | None = Field(default=None, min_length=1, max_length=255)
+    is_active: bool | None = None
+
+
+class WorkerResponse(BaseModel):
+    worker_id: str
+    tenant_id: str
+    name: str
+    role: str
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PartCreate(BaseModel):
     part_number: str = Field(..., min_length=1, max_length=255)
     customer_id: str

@@ -67,6 +67,10 @@ def _has_ongoing_machine_assignments(db: Session, tenant_id: str, machine_id: st
     return active_assignment is not None
 
 
+def machine_has_active_jobs(db: Session, tenant_id: str, machine_id: str) -> bool:
+    return _has_ongoing_machine_assignments(db, tenant_id, machine_id)
+
+
 def create_customer(db: Session, tenant_id: str, payload):
     customer = models.Customer(
         customer_id=_generate_id("CUS"),
@@ -216,6 +220,53 @@ def delete_shift(db: Session, tenant_id: str, shift_id: str):
     db.delete(shift)
     db.commit()
     return {"shift_id": shift_id}
+
+
+def create_worker(db: Session, tenant_id: str, payload):
+    worker = models.Worker(
+        worker_id=_generate_id("WRK"),
+        tenant_id=tenant_id,
+        name=_normalize_text(payload.name),
+        role=_normalize_text(payload.role),
+        is_active=payload.is_active,
+    )
+    db.add(worker)
+    db.commit()
+    db.refresh(worker)
+    return worker
+
+
+def list_workers(db: Session, tenant_id: str, include_inactive: bool = True):
+    query = db.query(models.Worker).filter(models.Worker.tenant_id == tenant_id)
+    if not include_inactive:
+        query = query.filter(models.Worker.is_active.is_(True))
+    return query.order_by(models.Worker.name.asc()).all()
+
+
+def get_worker(db: Session, tenant_id: str, worker_id: str):
+    return _get_or_404(db, models.Worker, worker_id, tenant_id, "worker_id")
+
+
+def update_worker(db: Session, tenant_id: str, worker_id: str, payload):
+    worker = _get_or_404(db, models.Worker, worker_id, tenant_id, "worker_id")
+    updates = payload.model_dump(exclude_unset=True)
+
+    if "name" in updates:
+        updates["name"] = _normalize_text(updates["name"])
+    if "role" in updates:
+        updates["role"] = _normalize_text(updates["role"])
+
+    _patch_instance(worker, updates)
+    db.commit()
+    db.refresh(worker)
+    return worker
+
+
+def delete_worker(db: Session, tenant_id: str, worker_id: str):
+    worker = _get_or_404(db, models.Worker, worker_id, tenant_id, "worker_id")
+    db.delete(worker)
+    db.commit()
+    return {"worker_id": worker_id}
 
 
 def create_part(db: Session, tenant_id: str, payload):
