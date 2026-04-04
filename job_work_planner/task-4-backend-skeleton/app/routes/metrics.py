@@ -6,6 +6,7 @@ from app.core.metrics_service import (
     get_late_jobs_service,
     get_wip_metrics_service,
 )
+from app.core.jobs_by_stage_service import get_jobs_by_stage_service
 from app.database import get_db
 from app.routes.response_utils import api_success
 
@@ -32,7 +33,12 @@ def get_wip_metrics(
     db: Session = Depends(get_db),
 ):
     tenant_id = _get_dashboard_user(request)["tenant_id"]
-    return api_success({"wip_by_stage": get_wip_metrics_service(db, tenant_id, from_date, to_date)})
+    return api_success(
+        {
+            "wip_by_stage": get_wip_metrics_service(db, tenant_id, from_date, to_date),
+            "stages": get_jobs_by_stage_service(db, tenant_id).get("stages", []),
+        }
+    )
 
 
 @router.get("/bottlenecks")
