@@ -3,33 +3,36 @@
 from datetime import datetime
 from collections import defaultdict
 import logging
+from sqlalchemy.orm import Session
+from app import models
 
 logger = logging.getLogger("jobwork-backend")
-
-from app.db.mock_db import JOBS_TABLE, JOB_OPERATIONS_TABLE, MACHINES_TABLE
 
 # -------------------------------------------------------
 # 1. WIP by Stage
 # -------------------------------------------------------
-def get_wip_metrics_service(tenant_id: str, from_date: str | None = None, to_date: str | None = None) -> list:
+def get_wip_metrics_service(db: Session, tenant_id: str, from_date: str | None = None, to_date: str | None = None) -> list:
     """
     Calculates Work-In-Progress (WIP) counts per operation stage.
     WIP = Operations that are currently active (READY, IN_PROGRESS, PAUSED).
     """
+    # Fetch active operations directly from AWS
+    active_ops = db.query(models.JobOperation).filter(
+        models.JobOperation.tenant_id == tenant_id,
+        models.JobOperation.status.in_(["READY", "IN_PROGRESS", "PAUSED"])
+    ).all()
+
     wip_counts = defaultdict(int)
 
-    for op in JOB_OPERATIONS_TABLE.values():
-        if op.get("tenant_id") != tenant_id:
-            continue
-            
-        # Optional: Date filtering based on planned start
-        if from_date or to_date:
-            start = op.get("planned_start_date", "")[:10]
+    for op in active_ops:
+        # Safely handle date filtering (in case you add planned_start_date later)
+        start_date = getattr(op, "planned_start_date", None)
+        if start_date:
+            start = start_date[:10]
             if from_date and start < from_date: continue
             if to_date and start > to_date: continue
 
-        if op["status"] in {"READY", "IN_PROGRESS", "PAUSED"}:
-            wip_counts[op["operation_id"]] += 1
+        wip_counts[op.operation_id] += 1
 
     # Format for charts (e.g., Recharts or Chart.js)
     return [{"stage": stage, "count": count} for stage, count in wip_counts.items()]
@@ -38,35 +41,45 @@ def get_wip_metrics_service(tenant_id: str, from_date: str | None = None, to_dat
 # -------------------------------------------------------
 # 2. Bottleneck Machines
 # -------------------------------------------------------
-def get_bottleneck_metrics_service(tenant_id: str, from_date: str | None = None, to_date: str | None = None) -> list:
+def get_bottleneck_metrics_service(db: Session, tenant_id: str, from_date: str | None = None, to_date: str | None = None) -> list:
     """
     Identifies machines with the highest backlog of operations.
     """
+    # Fetch pending operations that are assigned to a machine
+    pending_ops = db.query(models.JobOperation).filter(
+        models.JobOperation.tenant_id == tenant_id,
+        models.JobOperation.machine_id.isnot(None),
+        models.JobOperation.status.notin_(["COMPLETED", "CANCELLED"])
+    ).all()
+
     machine_load = defaultdict(int)
 
-    for op in JOB_OPERATIONS_TABLE.values():
-        if op.get("tenant_id") != tenant_id:
-            continue
-            
-        machine_id = op.get("machine_id")
-        if not machine_id:
-            continue # Skip unplanned operations
+    for op in pending_ops:
+        start_date = getattr(op, "planned_start_date", None)
+        if start_date:
+            start = start_date[:10]
+            if from_date and start < from_date: continue
+            if to_date and start > to_date: continue
 
-        # Backlog = anything not completed or cancelled
-        if op["status"] not in {"COMPLETED", "CANCELLED"}:
-            
-            if from_date or to_date:
-                start = op.get("planned_start_date", "")[:10]
-                if from_date and start < from_date: continue
-                if to_date and start > to_date: continue
+        machine_load[op.machine_id] += 1
 
-            machine_load[machine_id] += 1
+    if not machine_load:
+        return []
+
+    # Fetch machine names from AWS so the dashboard looks nice!
+    machines = db.query(models.Machine).filter(
+        models.Machine.tenant_id == tenant_id,
+        models.Machine.machine_id.in_(machine_load.keys())
+    ).all()
+    
+    # Create a quick dictionary to map machine_id -> machine_name
+    machine_names = {m.machine_id: m.name for m in machines}
 
     # Format and sort (highest load first)
     bottlenecks = [
         {
             "machine_id": m_id, 
-            "machine_name": MACHINES_TABLE.get(m_id, {}).get("machine_id", m_id),
+            "machine_name": machine_names.get(m_id, m_id), # Fallback to ID if name missing
             "pending_operations": count
         } 
         for m_id, count in machine_load.items()
@@ -79,31 +92,31 @@ def get_bottleneck_metrics_service(tenant_id: str, from_date: str | None = None,
 # -------------------------------------------------------
 # 3. Late Jobs
 # -------------------------------------------------------
-def get_late_jobs_service(tenant_id: str) -> dict:
+def get_late_jobs_service(db: Session, tenant_id: str) -> dict:
     """
     Returns jobs that have passed their due date but are not completed.
     """
     today = datetime.utcnow().date().isoformat()
-    late_jobs = []
+    
+    # Query AWS directly for late jobs! (This is much faster than the python loop)
+    late_jobs = db.query(models.Job).filter(
+        models.Job.tenant_id == tenant_id,
+        models.Job.status != "COMPLETED",
+        models.Job.due_date < today
+    ).order_by(models.Job.due_date.asc()).all()
 
-    for job in JOBS_TABLE.values():
-        if job.get("tenant_id") != tenant_id:
-            continue
-            
-        if job["status"] != "COMPLETED" and job["due_date"] < today:
-            late_jobs.append({
-                "job_id": job["job_id"],
-                "job_number": job["job_number"],
-                "customer_id": job["customer_id"],
-                "due_date": job["due_date"],
-                "priority": job["priority"],
-                "status": job["status"]
-            })
-
-    # Sort by how late they are (oldest due date first)
-    late_jobs.sort(key=lambda x: x["due_date"])
+    formatted_jobs = []
+    for job in late_jobs:
+        formatted_jobs.append({
+            "job_id": job.job_id,
+            "job_number": job.job_number,
+            "customer_id": job.customer_id,
+            "due_date": job.due_date,
+            "priority": job.priority,
+            "status": job.status
+        })
 
     return {
-        "total_late": len(late_jobs),
-        "jobs": late_jobs
+        "total_late": len(formatted_jobs),
+        "jobs": formatted_jobs
     }

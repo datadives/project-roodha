@@ -3,67 +3,80 @@
 import uuid
 from datetime import datetime
 import logging
+from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from app import models
 
 logger = logging.getLogger("jobwork-backend")
 
-# MOCK DB: notification_id -> record
-NOTIFICATIONS_TABLE = {}
-
 def create_notification(
+    db: Session,          # 👈 NEW: Database session
     tenant_id: str, 
-    user_id: str | None,  # If None, broadcasts to all Supervisors in tenant
+    user_id: str | None,  # If None, broadcasts to all in tenant
     notif_type: str,      # 'READY', 'CONFLICT', 'DELAY'
     message: str, 
     entity_ref: str
-) -> dict:
+):
     """
-    Creates an in-app notification record.
+    Creates an in-app notification record directly in AWS RDS.
     """
-    notif_id = str(uuid.uuid4())
-    notification = {
-        "notification_id": notif_id,
-        "tenant_id": tenant_id,
-        "user_id": user_id, 
-        "type": notif_type,
-        "message": message,
-        "entity_reference": entity_ref,
-        "is_read": False,
-        "created_at": datetime.utcnow().isoformat()
-    }
+    notification = models.Notification(
+        notification_id=f"NOT-{str(uuid.uuid4())[:8]}",
+        tenant_id=tenant_id,
+        user_id=user_id, 
+        type=notif_type,
+        message=message,
+        is_read=False,
+        created_at=datetime.utcnow().isoformat()
+        
+        # ⚠️ NOTE: 'entity_reference' was in your mock DB, but isn't in models.py yet.
+        # Add it to models.py as a Column(String) and you can uncomment the line below!
+        # entity_reference=entity_ref 
+    )
     
-    NOTIFICATIONS_TABLE[notif_id] = notification
+    db.add(notification)
+    db.commit()
+    db.refresh(notification)
     
     logger.info(f"NOTIFICATION_CREATED | Type: {notif_type} | Ref: {entity_ref}")
     return notification
 
 
-def get_user_notifications(tenant_id: str, user_id: str, unread_only: bool = False) -> list:
+def get_user_notifications(db: Session, tenant_id: str, user_id: str, unread_only: bool = False):
     """
-    Fetches notifications for a user (and tenant-wide broadcasts).
+    Fetches notifications for a user (and tenant-wide broadcasts) from AWS RDS.
     """
-    user_notifs = [
-        n for n in NOTIFICATIONS_TABLE.values()
-        if n["tenant_id"] == tenant_id and (n["user_id"] == user_id or n["user_id"] is None)
-    ]
+    # Base query: Matches the tenant AND (Matches the user OR is a broadcast where user_id is NULL)
+    query = db.query(models.Notification).filter(
+        models.Notification.tenant_id == tenant_id,
+        or_(models.Notification.user_id == user_id, models.Notification.user_id.is_(None))
+    )
     
+    # Optional filter
     if unread_only:
-        user_notifs = [n for n in user_notifs if not n["is_read"]]
+        query = query.filter(models.Notification.is_read == False)
         
-    user_notifs.sort(key=lambda x: x["created_at"], reverse=True)
-    return user_notifs
+    # Sort newest first and execute
+    return query.order_by(models.Notification.created_at.desc()).all()
 
 
-def mark_notification_read(notification_id: str, tenant_id: str) -> dict:
+def mark_notification_read(db: Session, notification_id: str, tenant_id: str):
     """
-    Marks a specific notification as read.
+    Marks a specific notification as read in AWS RDS.
     """
-    notif = NOTIFICATIONS_TABLE.get(notification_id)
+    notif = db.query(models.Notification).filter(
+        models.Notification.notification_id == notification_id,
+        models.Notification.tenant_id == tenant_id
+    ).first()
+    
     if not notif:
-        raise ValueError("Notification not found")
+        raise ValueError("Notification not found or unauthorized access")
         
-    if notif["tenant_id"] != tenant_id:
-        raise ValueError("Unauthorized access to notification")
-        
-    notif["is_read"] = True
-    notif["read_at"] = datetime.utcnow().isoformat()
+    notif.is_read = True
+    
+    # ⚠️ NOTE: 'read_at' is another field that isn't in models.py yet!
+    # notif.read_at = datetime.utcnow().isoformat() 
+    
+    db.commit()
+    db.refresh(notif)
     return notif

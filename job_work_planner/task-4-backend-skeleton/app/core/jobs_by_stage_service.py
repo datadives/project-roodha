@@ -12,47 +12,34 @@ Responsibilities:
 - Apply optional date filter
 - Sort jobs inside each stage
 - Return UI-friendly kanban response
-
-NOTE:
-- MVP implementation uses in-memory stores
-- DynamoDB / GSI to be added later
 """
 
 from datetime import datetime
 from collections import defaultdict
 import logging
+from sqlalchemy.orm import Session
+from app import models
 
 logger = logging.getLogger("jobwork-backend")
 
 # -------------------------------------------------------
-# TEMP MOCK IMPORTS (replace with DB later)
+# Helper: Determine current stage of a job (In-Memory)
 # -------------------------------------------------------
-from app.db.mock_db import JOBS_TABLE, JOB_OPERATIONS_TABLE
-
-
-# -------------------------------------------------------
-# Helper: Determine current stage of a job
-# -------------------------------------------------------
-def _get_current_stage(job_id: str) -> str:
+def _get_current_stage(operations: list) -> str:
     """
     Returns:
     - operation_id of first NOT_COMPLETED operation
     - 'COMPLETED' if all operations completed
     """
-
-    operations = [
-        op for op in JOB_OPERATIONS_TABLE.values()
-        if op["job_id"] == job_id
-    ]
-
     if not operations:
         return "NOT_PLANNED"
 
-    operations.sort(key=lambda x: x["sequence_number"])
+    # Sort operations by sequence_number
+    operations.sort(key=lambda x: x.sequence_number)
 
     for op in operations:
-        if op["status"] != "COMPLETED":
-            return op["operation_id"]
+        if op.status != "COMPLETED":
+            return op.operation_id
 
     return "COMPLETED"
 
@@ -61,28 +48,12 @@ def _get_current_stage(job_id: str) -> str:
 # SCRUM 30: Main Service
 # -------------------------------------------------------
 def get_jobs_by_stage_service(
-    *,
+    db: Session, # 👈 NEW: Database session parameter
     tenant_id: str,
     date: str | None = None,
 ):
     """
     SCRUM 30 – Jobs by Stage (Kanban)
-
-    Args:
-        tenant_id: Tenant from JWT
-        date: Optional YYYY-MM-DD filter
-
-    Returns:
-        {
-          "stages": [
-            {
-              "stage_id": "op-cut",
-              "stage_name": "op-cut",
-              "jobs": [...],
-              "counts": {...}
-            }
-          ]
-        }
     """
 
     # ---------------------------------------------------
@@ -96,13 +67,30 @@ def get_jobs_by_stage_service(
             raise ValueError("Invalid date format. Use YYYY-MM-DD")
 
     # ---------------------------------------------------
-    # STEP 2: Fetch tenant jobs (exclude CANCELLED)
+    # STEP 2: Fetch tenant jobs from AWS RDS (exclude CANCELLED)
     # ---------------------------------------------------
-    tenant_jobs = [
-        job for job in JOBS_TABLE.values()
-        if job["tenant_id"] == tenant_id
-        and job["status"] != "CANCELLED"
-    ]
+    tenant_jobs = db.query(models.Job).filter(
+        models.Job.tenant_id == tenant_id,
+        models.Job.status != "CANCELLED"
+    ).all()
+
+    if not tenant_jobs:
+        return {"stages": []}
+
+    # ---------------------------------------------------
+    # OPTIMIZATION: Fetch all operations for these jobs at once!
+    # This prevents the dreaded "N+1 Query" performance issue.
+    # ---------------------------------------------------
+    job_ids = [job.job_id for job in tenant_jobs]
+    all_operations = db.query(models.JobOperation).filter(
+        models.JobOperation.tenant_id == tenant_id,
+        models.JobOperation.job_id.in_(job_ids)
+    ).all()
+
+    # Group operations by job_id in memory
+    ops_by_job = defaultdict(list)
+    for op in all_operations:
+        ops_by_job[op.job_id].append(op)
 
     # ---------------------------------------------------
     # STEP 3: Group jobs by current stage
@@ -110,32 +98,27 @@ def get_jobs_by_stage_service(
     stage_map = defaultdict(list)
 
     for job in tenant_jobs:
-        job_id = job["job_id"]
-
-        current_stage = _get_current_stage(job_id)
+        job_ops = ops_by_job.get(job.job_id, [])
+        current_stage = _get_current_stage(job_ops)
 
         # ------------------------------------------------
         # STEP 4: Date filter (planned or active jobs)
-        # Rule (documented):
-        # Include job if ANY operation planned on that date
         # ------------------------------------------------
         if filter_date:
-            planned_ops = [
-                op for op in JOB_OPERATIONS_TABLE.values()
-                if op["job_id"] == job_id
-                and op.get("planned_start_date")
-                and op.get("planned_end_date")
-            ]
-
             is_active_on_date = False
 
-            for op in planned_ops:
-                start = datetime.fromisoformat(op["planned_start_date"]).date()
-                end = datetime.fromisoformat(op["planned_end_date"]).date()
+            for op in job_ops:
+                # Check if the model has planned dates, fallback to actual times if needed
+                start_date_str = getattr(op, "planned_start_date", op.actual_start_time)
+                end_date_str = getattr(op, "planned_end_date", op.actual_end_time)
 
-                if start <= filter_date <= end:
-                    is_active_on_date = True
-                    break
+                if start_date_str and end_date_str:
+                    start = datetime.fromisoformat(start_date_str).date()
+                    end = datetime.fromisoformat(end_date_str).date()
+
+                    if start <= filter_date <= end:
+                        is_active_on_date = True
+                        break
 
             if not is_active_on_date:
                 continue
@@ -144,21 +127,21 @@ def get_jobs_by_stage_service(
         # STEP 5: Compute delayed flag
         # ------------------------------------------------
         today = datetime.utcnow().date()
-        due_date = datetime.fromisoformat(job["due_date"]).date()
+        due_date = datetime.fromisoformat(job.due_date).date()
 
-        delayed = today > due_date and job["status"] != "COMPLETED"
+        delayed = today > due_date and job.status != "COMPLETED"
 
         # ------------------------------------------------
         # STEP 6: Build job card
         # ------------------------------------------------
         job_card = {
-            "job_id": job["job_id"],
-            "job_number": job["job_number"],
-            "customer_id": job["customer_id"],
-            "part_id": job["part_id"],
-            "qty": job["quantity"],
-            "due_date": job["due_date"],
-            "priority": job["priority"],
+            "job_id": job.job_id,
+            "job_number": job.job_number,
+            "customer_id": job.customer_id,
+            "part_id": job.part_id,
+            "qty": job.quantity,
+            "due_date": job.due_date,
+            "priority": job.priority,
             "delayed": delayed,
         }
 
@@ -172,8 +155,8 @@ def get_jobs_by_stage_service(
 
     stages_response = []
 
-    for stage_id, jobs in stage_map.items():
-        jobs.sort(
+    for stage_id, jobs_list in stage_map.items():
+        jobs_list.sort(
             key=lambda j: (
                 -priority_rank.get(j["priority"], 0),
                 j["due_date"],
@@ -184,10 +167,10 @@ def get_jobs_by_stage_service(
             {
                 "stage_id": stage_id,
                 "stage_name": stage_id,
-                "jobs": jobs,
+                "jobs": jobs_list,
                 "counts": {
-                    "total": len(jobs),
-                    "delayed": sum(1 for j in jobs if j["delayed"]),
+                    "total": len(jobs_list),
+                    "delayed": sum(1 for j in jobs_list if j["delayed"]),
                 },
             }
         )

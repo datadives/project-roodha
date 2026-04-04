@@ -26,8 +26,6 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         - Always return a Response
         """
 
-        
-        
         # -------------------------------------------------
         # 1. Public endpoints (no auth)
         # -------------------------------------------------
@@ -82,11 +80,11 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         request.state.user = {
             "user_id": "mock-user-id",
             "email": "mock.user@jobwork.com",
-            "tenant_id": "tenant-1",
-            "role": "OWNER",
+            "tenant_id": "tenant-123", # 👈 UPDATED: Matches our AWS database testing tenant!
+            "role": "OWNER",           # Keep as OWNER so you bypass all RBAC restrictions while testing
         }
 
         # -------------------------------------------------
         # 5. Continue request
         # -------------------------------------------------
-        return await call_next(request)     
+        return await call_next(request)

@@ -10,21 +10,25 @@ SCRUM 32: Production Entry
 RBAC: Strict Role Enforcement
 """
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app import models
 
 # -------------------------------------------------------
 # Import service layer functions
+# Notice: We removed the fake JOB_OPERATIONS_TABLE import!
 # -------------------------------------------------------
 from app.core.job_operations_service import (
     update_job_operation_status,
     plan_job_operation_service,
     add_production_entry_service,
-    JOB_OPERATIONS_TABLE,
     CapacityConflictError  
 )
 
 # If you implemented the audit service, keep this import!
 from app.core.audit_service import get_audit_trail
+from app.routes.response_utils import api_success
 
 # -------------------------------------------------------
 # Router
@@ -43,6 +47,7 @@ def update_operation_status(
     job_operation_id: str,
     payload: dict,
     request: Request,
+    db: Session = Depends(get_db)  # 👈 NEW: Get AWS Database session
 ):
     """
     Update job operation status (Execution Controls).
@@ -74,6 +79,7 @@ def update_operation_status(
     # 4. Call service layer
     try:
         updated_operation = update_job_operation_status(
+            db=db, # 👈 NEW: Pass database session to service layer
             job_operation_id=job_operation_id,
             tenant_id=user["tenant_id"],
             user_id=user["user_id"], 
@@ -90,7 +96,7 @@ def update_operation_status(
             detail=str(exc)
         )
 
-    return updated_operation
+    return api_success(updated_operation)
 
 
 # =======================================================
@@ -102,6 +108,7 @@ def plan_job_operation(
     job_operation_id: str,
     payload: dict,
     request: Request,
+    db: Session = Depends(get_db)  # 👈 NEW: Get AWS Database session
 ):
     """
     Assigns or updates the plan.
@@ -128,17 +135,17 @@ def plan_job_operation(
     ignore_conflicts = payload.get("ignore_conflicts", False)
 
     # 3. RBAC Phase 2: SUPERVISOR OVERRIDE RESTRICTION
-    # If they are trying to break the rules, verify they are a Supervisor/Admin
     if force or ignore_conflicts:
         if role not in {"SUPERVISOR", "ADMIN", "OWNER"}:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Forbidden: Planners cannot override rules. Only Supervisors or Admins can force schedules or ignore conflicts."
+                detail="Forbidden: Planners cannot override rules. Only Supervisors or Admins can force schedules."
             )
 
     # 4. Call Service Layer
     try:
         updated_operation = plan_job_operation_service(
+            db=db, # 👈 NEW: Pass database session to service layer
             job_operation_id=job_operation_id,
             machine_id=payload.get("machine_id"),
             shift_id=payload.get("shift_id"),
@@ -164,7 +171,7 @@ def plan_job_operation(
             detail=str(exc)
         )
 
-    return updated_operation
+    return api_success(updated_operation)
 
 
 # =======================================================
@@ -176,6 +183,7 @@ def record_production(
     job_operation_id: str,
     payload: dict,
     request: Request,
+    db: Session = Depends(get_db)  # 👈 NEW: Get AWS Database session
 ):
     """
     Records production quantities for an operation.
@@ -198,6 +206,7 @@ def record_production(
 
     try:
         result = add_production_entry_service(
+            db=db, # 👈 NEW: Pass database session to service layer
             job_operation_id=job_operation_id,
             produced_qty=payload.get("produced_qty", 0),
             scrap_qty=payload.get("scrap_qty", 0),
@@ -206,7 +215,7 @@ def record_production(
             notes=payload.get("notes"),
             tenant_id=user["tenant_id"],
         )
-        return result
+        return api_success(result, message="Production recorded")
 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -220,20 +229,32 @@ def record_production(
 def get_job_operation(
     job_operation_id: str,
     request: Request,
+    db: Session = Depends(get_db) # 👈 NEW: Get AWS Database session
 ):
     if not hasattr(request.state, "user"):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    job_op = JOB_OPERATIONS_TABLE.get(job_operation_id)
+    # 👈 NEW: Fetch directly from AWS RDS instead of fake dictionary
+    job_op = db.query(models.JobOperation).filter(
+        models.JobOperation.job_operation_id == job_operation_id,
+        models.JobOperation.tenant_id == request.state.user["tenant_id"]
+    ).first()
 
     if not job_op:
         raise HTTPException(status_code=404, detail="Job operation not found")
 
+<<<<<<< ours
+    return job_op
+=======
     # 👇 NEW: STRICT TENANT CHECK
     if job_op.get("tenant_id") != request.state.user["tenant_id"]:
         raise HTTPException(status_code=404, detail="Job operation not found")
 
-    return job_op
+    return api_success(job_op)
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 
 # =======================================================
 # AUDIT TRAIL
@@ -242,7 +263,8 @@ def get_job_operation(
 @router.get("/{job_operation_id}/audit")
 def get_job_operation_audit(
     job_operation_id: str,
-    request: Request
+    request: Request,
+    db: Session = Depends(get_db) # 👈 NEW: Get AWS Database session
 ):
     """
     Fetch the immutable audit trail for a specific Job Operation.
@@ -253,9 +275,10 @@ def get_job_operation_audit(
     tenant_id = request.state.user["tenant_id"]
 
     trail = get_audit_trail(
+        db=db, # 👈 NEW: Pass database session to audit service
         tenant_id=tenant_id,
         entity_type="JOB_OPERATION",
         entity_id=job_operation_id
     )
 
-    return {"audit_trail": trail}
+    return api_success({"audit_trail": trail})

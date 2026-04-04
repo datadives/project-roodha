@@ -7,12 +7,11 @@ from aws_cdk import (
     CfnOutput,
 )
 from constructs import Construct
- 
- 
+
 class ApiGatewayStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, ec2_public_ip: str, **kwargs):
         super().__init__(scope, construct_id, **kwargs)
- 
+
         # ---------------------------------------------------------
         # HTTP API
         # ---------------------------------------------------------
@@ -26,16 +25,16 @@ class ApiGatewayStack(Stack):
                 allow_origins=["*"],  # tighten later for prod
             ),
         )
- 
+
         # ---------------------------------------------------------
-        # Cognito JWT Authorizer
+        # Cognito JWT Authorizer (TEMPORARILY DISABLED)
         # ---------------------------------------------------------
-        jwt_authorizer = authorizers.HttpJwtAuthorizer(
-            "CognitoJwtAuthorizer",
-            jwt_issuer=f"https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_M3xBYcen7",
-            jwt_audience=["5592g38cjskmpd9ceid24osugm"],
-        )
- 
+        # jwt_authorizer = authorizers.HttpJwtAuthorizer(
+        #     "CognitoJwtAuthorizer",
+        #     jwt_issuer=f"https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_M3xBYcen7",
+        #     jwt_audience=["5592g38cjskmpd9ceid24osugm"],
+        # )
+
         # ---------------------------------------------------------
         # EC2 HTTP Integration
         # ---------------------------------------------------------
@@ -44,7 +43,7 @@ class ApiGatewayStack(Stack):
             url=f"http://{ec2_public_ip}",
             method=apigw.HttpMethod.ANY,
         )
- 
+
         # ---------------------------------------------------------
         # Public Route (NO AUTH)
         # ---------------------------------------------------------
@@ -53,9 +52,9 @@ class ApiGatewayStack(Stack):
             methods=[apigw.HttpMethod.GET],
             integration=ec2_integration,
         )
- 
+
         # ---------------------------------------------------------
-        # Protected Routes (JWT REQUIRED)
+        # Protected Routes (Temporarily NO AUTH for testing)
         # ---------------------------------------------------------
         protected_routes = [
             "/auth/{proxy+}",
@@ -64,15 +63,15 @@ class ApiGatewayStack(Stack):
             "/attachments/{proxy+}",
             "/reports/{proxy+}",
         ]
- 
+
         for route in protected_routes:
             http_api.add_routes(
                 path=route,
                 methods=[apigw.HttpMethod.ANY],
                 integration=ec2_integration,
-                authorizer=jwt_authorizer,
+                # authorizer=jwt_authorizer,  <--- DISABLED HERE
             )
- 
+
         # ---------------------------------------------------------
         # Output
         # ---------------------------------------------------------
@@ -81,4 +80,3 @@ class ApiGatewayStack(Stack):
             "HttpApiBaseUrl",
             value=http_api.api_endpoint,
         )
- 

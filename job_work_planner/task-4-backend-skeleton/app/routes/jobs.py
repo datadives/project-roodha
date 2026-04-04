@@ -1,324 +1,194 @@
 """
-jobs.py
--------
-Job APIs
+job_operations.py
+-----------------
+Job Operation APIs
 
-RESPONSIBILITIES:
-- Scrum 24: Create Job Header
-- Scrum 25: Auto-generate Job Operations from Part Route
-
-IMPORTANT DESIGN RULES:
-- tenant_id NEVER comes from request payload
-- tenant_id ALWAYS comes from JWT (request.state.user)
-- Job operations are generated ONLY AFTER job header is created
-- If operation creation fails → job is rolled back (atomic behavior)
+SCRUM 28: Update Job Operation Status
+SCRUM 29/34: Plan Job Operation & Rescheduling
+SCRUM 31: Execution Controls (Start / Pause / Resume)
+SCRUM 32: Production Entry
+RBAC: Strict Role Enforcement
 """
 
-from fastapi import APIRouter, HTTPException, Request, status
-from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import Optional
 import uuid
+<<<<<<< ours
+from datetime import datetime
+=======
 import logging
 
 # ---------------------------------------------------------------
 # Import Scrum 25 service (business logic, NOT API)
 # ---------------------------------------------------------------
 from app.core.job_operations_service import create_job_operations
+from app.routes.response_utils import api_success
 
+>>>>>>> theirs
 
-from app.db.mock_db import JOBS_TABLE, MOCK_CUSTOMERS, PARTS_TABLE as MOCK_PARTS
+from app.database import get_db
+from app import models
 
-# ---------------------------------------------------------------
+# -------------------------------------------------------
 # Router
-# ---------------------------------------------------------------
+# -------------------------------------------------------
 router = APIRouter(
-    prefix="/jobs",
-    tags=["Jobs"]
+    prefix="/job-operations",
+    tags=["Job Operations"]
 )
 
-# ---------------------------------------------------------------
-# Logger (shared application logger)
-# ---------------------------------------------------------------
-logger = logging.getLogger("jobwork-backend")
+# -------------------------------------------------------
+# Pydantic Schemas (Input Validation)
+# -------------------------------------------------------
+class StatusUpdatePayload(BaseModel):
+    status: str
+    quantity_completed: int = 0
+    quantity_rejected: int = 0
+    rework_flag: bool = False
+    rework_note: Optional[str] = None
+    override_sequence: bool = False
 
-# ---------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------
-ALLOWED_PRIORITY = {"LOW", "MEDIUM", "HIGH"}
-ALLOWED_CREATOR_ROLES = {"OWNER", "SUPERVISOR"}
+class PlanPayload(BaseModel):
+    machine_id: str
+    shift_id: Optional[str] = None
+    planned_start_date: Optional[str] = None
+    planned_end_date: Optional[str] = None
+    force: bool = False
+    reason: Optional[str] = None
+    ignore_conflicts: bool = False
 
+class ProductionPayload(BaseModel):
+    produced_qty: int = 0
+    scrap_qty: int = 0
+    rework_qty: int = 0
+    notes: Optional[str] = None
 
 # =======================================================
-# POST /jobs
+# SCRUM 28 + SCRUM 31
+# PATCH /job-operations/{job_operation_id}/status
 # =======================================================
-@router.post("/", status_code=status.HTTP_201_CREATED)
-def create_job(payload: dict, request: Request):
+@router.patch("/{job_operation_id}/status")
+def update_operation_status(
+    job_operation_id: str,
+    payload: StatusUpdatePayload,
+    request: Request,
+    db: Session = Depends(get_db)
+):
     """
-    POST /jobs
-    Allowed Roles: PLANNER, SUPERVISOR, ADMIN
+    Update job operation status (Execution Controls).
+    Allowed Roles: OPERATOR, SUPERVISOR, ADMIN
     """
+    # 1. Authentication
+    tenant_id = "tenant-123"
+    role = "OPERATOR"
+    if hasattr(request.state, "user"):
+        tenant_id = request.state.user.get("tenant_id", "tenant-123")
+        role = request.state.user.get("role", "OPERATOR")
 
-    # 1. Authentication & Context
-    if not hasattr(request.state, "user"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized"
-        )
-
-    user = request.state.user
-    tenant_id = user["tenant_id"]
-    created_by = user["user_id"]
-    role = user.get("role") 
-
-    # -----------------------------------------------------------
-    # 👇 NEW: Strict RBAC for Job Creation
-    # -----------------------------------------------------------
-    if role not in {"PLANNER", "SUPERVISOR", "ADMIN", "OWNER"}:
+    # 2. RBAC - Operators execute, Supervisors/Admins can step in. Planners CANNOT execute.
+    if role not in {"OPERATOR", "SUPERVISOR", "ADMIN", "OWNER"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Operators cannot create new jobs. Only Planners, Supervisors, or Admins are allowed."
+            detail="Forbidden: Only Operators, Supervisors, or Admins can update execution status."
         )
 
+    # 3. Find Operation in AWS RDS
+    operation = db.query(models.JobOperation).filter(
+        models.JobOperation.job_operation_id == job_operation_id,
+        models.JobOperation.tenant_id == tenant_id
+    ).first()
+
+    if not operation:
+        raise HTTPException(status_code=404, detail="Job operation not found")
+
+    # 4. Update Status and Timestamps
+    operation.status = payload.status
     
-    # -----------------------------------------------------------
-    # 3. Read request payload
-    # -----------------------------------------------------------
-    customer_id = payload.get("customer_id")
-    part_id = payload.get("part_id")
-    quantity = payload.get("quantity")
-    received_date = payload.get("received_date")
-    due_date = payload.get("due_date")
-    priority = payload.get("priority")
+    if payload.status == "IN_PROGRESS" and not operation.actual_start_time:
+        operation.actual_start_time = datetime.utcnow().isoformat()
+    elif payload.status == "COMPLETED":
+        operation.actual_end_time = datetime.utcnow().isoformat()
 
-    # -----------------------------------------------------------
-    # 4. Validations (Scrum 24)
-    # -----------------------------------------------------------
-    # Explicit None checks (IMPORTANT: quantity=0 must not be treated as missing)
-    if (
-        customer_id is None
-        or part_id is None
-        or quantity is None
-        or received_date is None
-        or due_date is None
-        or priority is None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing required fields"
-        )
+    # 5. Save to AWS Database
+    db.commit()
+    db.refresh(operation)
 
-    if quantity <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Quantity must be > 0"
-        )
+    return {"message": "Status updated successfully", "operation": operation}
 
-    if priority not in ALLOWED_PRIORITY:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid priority"
-        )
 
-    # ISO date string comparison works correctly here
-    if due_date < received_date:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid date range"
-        )
-
-    # -----------------------------------------------------------
-    # 5. Tenant isolation checks (mocked)
-    # -----------------------------------------------------------
-    if (
-        customer_id not in MOCK_CUSTOMERS
-        or MOCK_CUSTOMERS[customer_id]["tenant_id"] != tenant_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid customer"
-        )
-
-    if (
-        part_id not in MOCK_PARTS
-        or MOCK_PARTS[part_id]["tenant_id"] != tenant_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid part"
-        )
-
-    # -----------------------------------------------------------
-    # 6. Generate Job Header (Scrum 24)
-    # -----------------------------------------------------------
-    job_id = str(uuid.uuid4())
-
-    tenant_job_count = sum(
-        1 for job in JOBS_TABLE.values()
-        if job["tenant_id"] == tenant_id
-    )
-
-    job_number = f"JOB-{tenant_id.upper()}-{tenant_job_count + 1:04d}"
-
-    now = datetime.utcnow().isoformat()
-
-    job = {
-        "job_id": job_id,
-        "job_number": job_number,
-        "customer_id": customer_id,
-        "part_id": part_id,
-        "tenant_id": tenant_id,
-        "quantity": quantity,
-        "received_date": received_date,
-        "due_date": due_date,
-        "priority": priority,
-        "status": "NOT_STARTED",
-        "created_by": created_by,
-        "created_at": now,
-        "updated_at": now,
-    }
-
-    # Persist job header
-    JOBS_TABLE[job_id] = job
-
-    # -----------------------------------------------------------
-    # 7. SCRUM 25 – Auto-generate Job Operations (ATOMIC)
-    # -----------------------------------------------------------
-    try:
-        job_operations = create_job_operations(
-            job_id=job_id,
-            part_id=part_id,
-            tenant_id=tenant_id
-        )
-    except Exception as e:
-        # 🔥 Rollback job header if route creation fails
-        JOBS_TABLE.pop(job_id, None)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-
-    # -----------------------------------------------------------
-    # 8. Audit Logging (Scrum 24 + 25)
-    # -----------------------------------------------------------
-    logger.info(
-        "JOB_CREATED",
-        extra={
-            "event": "JOB_CREATED",
-            "job_id": job_id,
-            "tenant_id": tenant_id,
-            "created_by": created_by
-        }
-    )
-
-    logger.info(
-        "JOB_ROUTE_CREATED",
-        extra={
-            "event": "JOB_ROUTE_CREATED",
-            "job_id": job_id,
-            "tenant_id": tenant_id
-        }
-    )
-
+<<<<<<< ours
+# =======================================================
+# SCRUM 29 + SCRUM 34 + Conflict Validation
+# PATCH /job-operations/{job_operation_id}/plan
+# =======================================================
+@router.patch("/{job_operation_id}/plan")
+def plan_job_operation(
+    job_operation_id: str,
+    payload: PlanPayload,
+=======
     # -----------------------------------------------------------
     # 9. Response
     # -----------------------------------------------------------
-    return {
-        "job": job,
-        "operations": job_operations
-    }
+    return api_success({"job": job, "operations": job_operations}, message="Job created")
 
 # -------------------------------------------------------------------
 # GET /jobs  (Scrum 26)
 # -------------------------------------------------------------------
 @router.get("/")
 def list_jobs(
+>>>>>>> theirs
     request: Request,
-    status: str | None = None,
-    customer_id: str | None = None,
-    priority: str | None = None,
-    from_date: str | None = None,
-    to_date: str | None = None,
-    page: int = 1,
-    page_size: int = 25,
+    db: Session = Depends(get_db)
 ):
     """
-    GET /jobs
-
-    PURPOSE:
-    - List jobs for current tenant
-    - Supports filters + pagination
-
-    FILTERS:
-    - status
-    - customer_id
-    - priority
-    - from_date / to_date (received_date based)
-
-    PAGINATION:
-    - page (default = 1)
-    - page_size (default = 25, max = 100)
-
-    NOTE:
-    - In-memory filtering (MVP)
-    - In production, DynamoDB GSI will be used
+    Assigns or updates the plan.
+    Allowed to Plan: PLANNER, SUPERVISOR, ADMIN
+    Allowed to Override (force/ignore_conflicts): SUPERVISOR, ADMIN
     """
-
-    # ---------------------------------------------------------------
     # 1. Authentication
-    # ---------------------------------------------------------------
-    if not hasattr(request.state, "user"):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    tenant_id = request.state.user["tenant_id"]
-
-    # ---------------------------------------------------------------
-    # 2. Pagination validation
-    # ---------------------------------------------------------------
-    if page < 1:
-        raise HTTPException(status_code=400, detail="page must be >= 1")
-
-    if page_size < 1 or page_size > 100:
-        raise HTTPException(status_code=400, detail="page_size must be between 1 and 100")
-
-    # ---------------------------------------------------------------
-    # 3. Tenant isolation
-    # ---------------------------------------------------------------
-    jobs = [
-        job for job in JOBS_TABLE.values()
-        if job["tenant_id"] == tenant_id
-    ]
-
-    # ---------------------------------------------------------------
-    # 4. Apply filters
-    # ---------------------------------------------------------------
-    if status:
-        jobs = [job for job in jobs if job["status"] == status]
-
-    if customer_id:
-        jobs = [job for job in jobs if job["customer_id"] == customer_id]
-
-    if priority:
-        jobs = [job for job in jobs if job["priority"] == priority]
-
-    if from_date:
-        jobs = [job for job in jobs if job["received_date"] >= from_date]
-
-    if to_date:
-        jobs = [job for job in jobs if job["received_date"] <= to_date]
-
-    # ---------------------------------------------------------------
-    # 5. Sorting
-    #   - due_date ASC
-    #   - priority DESC
-    # ---------------------------------------------------------------
-    priority_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
-
-    jobs.sort(
-        key=lambda job: (
-            job["due_date"],
-            -priority_rank.get(job["priority"], 0)
+    tenant_id = "tenant-123"
+    role = "PLANNER"
+    if hasattr(request.state, "user"):
+        tenant_id = request.state.user.get("tenant_id", "tenant-123")
+        role = request.state.user.get("role", "PLANNER")
+    
+    # 2. RBAC Phase 1: Can they access the planning feature at all?
+    if role not in {"PLANNER", "SUPERVISOR", "ADMIN", "OWNER"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Forbidden: Only Planners, Supervisors, or Admins can assign schedules."
         )
-    )
 
+<<<<<<< ours
+    # 3. RBAC Phase 2: SUPERVISOR OVERRIDE RESTRICTION
+    if payload.force or payload.ignore_conflicts:
+        if role not in {"SUPERVISOR", "ADMIN", "OWNER"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Planners cannot override rules. Only Supervisors or Admins can force schedules."
+            )
+
+    # 4. Find Operation in AWS RDS
+    operation = db.query(models.JobOperation).filter(
+        models.JobOperation.job_operation_id == job_operation_id,
+        models.JobOperation.tenant_id == tenant_id
+    ).first()
+
+    if not operation:
+        raise HTTPException(status_code=404, detail="Job operation not found")
+
+    # 5. Apply the Plan
+    operation.machine_id = payload.machine_id
+    operation.shift_id = payload.shift_id
+    
+    # Save to AWS
+    db.commit()
+    db.refresh(operation)
+
+    return {"message": "Plan assigned successfully", "operation": operation}
+=======
     # ---------------------------------------------------------------
     # 6. Pagination slice
     # ---------------------------------------------------------------
@@ -330,72 +200,74 @@ def list_jobs(
     # ---------------------------------------------------------------
     # 7. Response
     # ---------------------------------------------------------------
-    return {
-        "items": paginated_jobs,
+    today = datetime.utcnow().date()
+    enriched_items = []
+    for job in paginated_jobs:
+        due_date = datetime.fromisoformat(job["due_date"]).date()
+        enriched_items.append({
+            **job,
+            "delayed": today > due_date and job["status"] != "COMPLETED",
+        })
+
+    return api_success({
+        "items": enriched_items,
         "page": page,
         "page_size": page_size,
-        "total_count": total_count
-    }
+        "total_count": total_count,
+    })
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 
 
 # =======================================================
-# SCRUM 30 – Jobs by Stage (Kanban View)
-# GET /jobs/by-stage?date=YYYY-MM-DD
+# SCRUM 32 – Record Production Entry
+# POST /job-operations/{job_operation_id}/production
 # =======================================================
-
-from fastapi import Query
-
-from app.core.jobs_by_stage_service import get_jobs_by_stage_service
-
-
-@router.get("/by-stage")
-def get_jobs_by_stage(
+@router.post("/{job_operation_id}/production")
+def record_production(
+    job_operation_id: str,
+    payload: ProductionPayload,
     request: Request,
-    date: str | None = Query(
-        default=None,
-        description="Optional date filter (YYYY-MM-DD)"
-    ),
+    db: Session = Depends(get_db)
 ):
     """
-    SCRUM 30 – Jobs by Stage API
-
-    Purpose:
-    - Kanban-style backend response for supervisor UI
-    - Groups jobs by current_stage
-
-    Query Params:
-    - date (optional): YYYY-MM-DD
+    Records production quantities for an operation.
+    Allowed Roles: OPERATOR, SUPERVISOR, ADMIN
     """
-
-    # ---------------------------------------------------
     # 1. Authentication
-    # ---------------------------------------------------
-    if not hasattr(request.state, "user"):
+    tenant_id = "tenant-123"
+    operator_id = "user-001"
+    role = "OPERATOR"
+    if hasattr(request.state, "user"):
+        tenant_id = request.state.user.get("tenant_id", "tenant-123")
+        role = request.state.user.get("role", "OPERATOR")
+        operator_id = request.state.user.get("user_id", "user-001")
+
+    # 2. RBAC
+    if role not in {"OPERATOR", "SUPERVISOR", "ADMIN", "OWNER"}:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Only Operators, Supervisors, or Admins can record production."
         )
 
-    tenant_id = request.state.user["tenant_id"]
-
-    # ---------------------------------------------------
-    # 2. Call service layer
-    # ---------------------------------------------------
-    try:
-        response = get_jobs_by_stage_service(
-            tenant_id=tenant_id,
-            date=date
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc)
-        )
-
+<<<<<<< ours
+    # 3. Ensure Operation exists
+    operation = db.query(models.JobOperation).filter(
+        models.JobOperation.job_operation_id == job_operation_id,
+        models.JobOperation.tenant_id == tenant_id
+    ).first()
+=======
     # ---------------------------------------------------
     # 3. Response
     # ---------------------------------------------------
-    return response
+    return api_success(response)
+<<<<<<< ours
+=======
+
+
+>>>>>>> theirs
 
 
 
@@ -408,103 +280,99 @@ def get_jobs_by_stage(
 
 
 
+>>>>>>> theirs
+
+    if not operation:
+        raise HTTPException(status_code=404, detail="Job operation not found")
+
+    # 4. Create Production Entry in AWS RDS
+    new_entry = models.ProductionEntry(
+        entry_id=f"PRD-{str(uuid.uuid4())[:8]}",
+        tenant_id=tenant_id,
+        job_operation_id=job_operation_id,
+        operator_id=operator_id,
+        produced_qty=payload.produced_qty,
+        scrap_qty=payload.scrap_qty,
+        rework_qty=payload.rework_qty,
+        timestamp=datetime.utcnow().isoformat()
+    )
+
+    db.add(new_entry)
+    db.commit()
+    db.refresh(new_entry)
+
+    return {"message": "Production recorded", "entry": new_entry}
 
 
-# -------------------------------------------------------------------
-# GET /jobs/{job_id}  (Scrum 27)
-# -------------------------------------------------------------------
-@router.get("/{job_id}")
-def get_job_detail(job_id: str, request: Request):
-    """
-    GET /jobs/{job_id}
-
-    PURPOSE:
-    - Fetch single job header
-    - Fetch ordered job operations
-    - Compute current_stage
-    - Compute delayed flag
-    """
-
-    # ---------------------------------------------------------------
-    # 1. Authentication
-    # ---------------------------------------------------------------
-    if not hasattr(request.state, "user"):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    tenant_id = request.state.user["tenant_id"]
-
-    # ---------------------------------------------------------------
-    # 2. Fetch job header
-    # ---------------------------------------------------------------
-    job = JOBS_TABLE.get(job_id)
-
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    # Tenant isolation (preferred: 404)
-    if job["tenant_id"] != tenant_id:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    # ---------------------------------------------------------------
-    # 3. Fetch job operations (Scrum 25 data)
-    # ---------------------------------------------------------------
-    from app.db.mock_db import JOB_OPERATIONS_TABLE
-
-    operations = [
-        op for op in JOB_OPERATIONS_TABLE.values()
-        if op["job_id"] == job_id
-    ]
-
-    # Sort by sequence_number
-    operations.sort(key=lambda op: op["sequence_number"])
-
-    # ---------------------------------------------------------------
-    # 4. Compute current_stage
-    # ---------------------------------------------------------------
-    current_stage = "COMPLETED"
-
-    for op in operations:
-        if op["status"] != "COMPLETED":
-            current_stage = op["operation_id"]
-            break
-
-    # ---------------------------------------------------------------
-    # 5. Compute delayed flag
-    # ---------------------------------------------------------------
-    today = datetime.utcnow().date()
-    due_date = datetime.fromisoformat(job["due_date"]).date()
-
-    delayed = today > due_date and job["status"] != "COMPLETED"
-
+<<<<<<< ours
+# =======================================================
+# GET Single Job Operation
+# GET /job-operations/{job_operation_id}
+# =======================================================
+@router.get("/{job_operation_id}")
+def get_job_operation(
+    job_operation_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    tenant_id = "tenant-123"
+    if hasattr(request.state, "user"):
+        tenant_id = request.state.user.get("tenant_id", "tenant-123")
+=======
     # ---------------------------------------------------------------
     # 6. Response
     # ---------------------------------------------------------------
-    return {
+    return api_success({
         "job": {
             **job,
             "current_stage": current_stage,
             "delayed": delayed
         },
         "operations": operations
-    }
+    })
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 
+    # Fetch from AWS RDS
+    job_op = db.query(models.JobOperation).filter(
+        models.JobOperation.job_operation_id == job_operation_id,
+        models.JobOperation.tenant_id == tenant_id
+    ).first()
 
-# app/routes/jobs.py (Add to the bottom)
+    if not job_op:
+        raise HTTPException(status_code=404, detail="Job operation not found")
 
-from app.core.audit_service import get_audit_trail
+    return job_op
 
 # =======================================================
 # AUDIT TRAIL
-# GET /jobs/{job_id}/audit
+# GET /job-operations/{job_operation_id}/audit
 # =======================================================
-@router.get("/{job_id}/audit")
-def get_job_audit(
-    job_id: str,
-    request: Request
+@router.get("/{job_operation_id}/audit")
+def get_job_operation_audit(
+    job_operation_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """
-    Fetch the immutable audit trail for a specific Job.
+    Fetch the immutable audit trail for a specific Job Operation.
     """
+<<<<<<< ours
+    tenant_id = "tenant-123"
+    if hasattr(request.state, "user"):
+        tenant_id = request.state.user.get("tenant_id", "tenant-123")
+
+    # Fetch Audit Logs directly from AWS RDS
+    audit_logs = db.query(models.AuditLog).filter(
+        models.AuditLog.entity_type == "JOB_OPERATION",
+        models.AuditLog.entity_id == job_operation_id,
+        models.AuditLog.tenant_id == tenant_id
+    ).all()
+
+    return {"audit_trail": audit_logs}
+=======
     if not hasattr(request.state, "user"):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -520,4 +388,8 @@ def get_job_audit(
         entity_id=job_id
     )
 
-    return {"audit_trail": trail}
+    return api_success({"audit_trail": trail})
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
