@@ -42,6 +42,11 @@ export async function fetchParts() {
   return response.data
 }
 
+export async function fetchPartById(partId) {
+  const response = await api.get(`/master-data/parts/${partId}`)
+  return response.data
+}
+
 export async function createPart(payload) {
   const response = await api.post('/master-data/parts', payload)
   return response.data

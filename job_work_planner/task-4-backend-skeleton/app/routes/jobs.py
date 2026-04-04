@@ -17,7 +17,7 @@ router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
 
 class JobCreatePayload(BaseModel):
-    job_number: str = Field(..., min_length=1, max_length=255)
+    job_number: str | None = Field(default=None, min_length=1, max_length=255)
     customer_id: str
     part_id: str
     quantity: int = Field(..., gt=0)
@@ -31,6 +31,18 @@ def _require_user(request: Request) -> dict:
     if not user or not user.get("tenant_id"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     return user
+
+
+def _generate_job_number(db: Session, tenant_id: str) -> str:
+    while True:
+        candidate = f"JW-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
+        existing_job = (
+            db.query(models.Job)
+            .filter(models.Job.tenant_id == tenant_id, models.Job.job_number == candidate)
+            .first()
+        )
+        if not existing_job:
+            return candidate
 
 
 def _serialize_operation(operation) -> dict:
@@ -110,9 +122,11 @@ def create_job(payload: JobCreatePayload, request: Request, db: Session = Depend
             detail="Part does not belong to the provided customer",
         )
 
+    job_number = payload.job_number.strip() if payload.job_number else _generate_job_number(db, tenant_id)
+
     existing_job = (
         db.query(models.Job)
-        .filter(models.Job.tenant_id == tenant_id, models.Job.job_number == payload.job_number)
+        .filter(models.Job.tenant_id == tenant_id, models.Job.job_number == job_number)
         .first()
     )
     if existing_job:
@@ -124,7 +138,7 @@ def create_job(payload: JobCreatePayload, request: Request, db: Session = Depend
     job = models.Job(
         job_id=f"JOB-{uuid.uuid4().hex[:8].upper()}",
         tenant_id=tenant_id,
-        job_number=payload.job_number.strip(),
+        job_number=job_number,
         customer_id=payload.customer_id,
         part_id=payload.part_id,
         quantity=payload.quantity,
