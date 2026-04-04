@@ -32,6 +32,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         # Allow documentation and health checks to bypass auth
         public_paths = {
             "/health", 
+            "/ready",
             "/docs", 
             "/openapi.json", 
             "/redoc"
