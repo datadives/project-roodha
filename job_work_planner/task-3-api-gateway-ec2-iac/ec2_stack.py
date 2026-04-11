@@ -60,6 +60,14 @@ class Ec2Stack(Stack):
         instance.role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")
         )
+        # Priority 3: Add Observability Policies
+        instance.role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name("CloudWatchAgentServerPolicy")
+        )
+        instance.role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name("AWSXRayDaemonWriteAccess")
+        )
+
         backend_asset.grant_read(instance.role)
 
         backend_env_lines = [
@@ -77,9 +85,15 @@ class Ec2Stack(Stack):
             "#!/bin/bash",
             "set -euxo pipefail",
             "dnf update -y",
-            "dnf install -y python3.11 python3.11-pip nginx unzip",
+            # Priority 3: Install Agents
+            "dnf install -y python3.11 python3.11-pip nginx unzip amazon-cloudwatch-agent",
             "mkdir -p /opt/roodha",
             "mkdir -p /etc/nginx/conf.d",
+            
+            # Setup X-Ray Daemon
+            'curl https://s3.ap-south-1.amazonaws.com/aws-xray-assets.ap-south-1/xray-daemon/aws-xray-daemon-3.x.rpm -o /tmp/xray.rpm',
+            "dnf install -y /tmp/xray.rpm",
+
             "aws s3 cp s3://%s/%s /tmp/roodha-backend.zip --region %s"
             % (backend_asset.s3_bucket_name, backend_asset.s3_object_key, Stack.of(self).region),
             "rm -rf /opt/roodha/app",
@@ -88,9 +102,20 @@ class Ec2Stack(Stack):
             "$PYTHON_BIN -m venv /opt/roodha/venv",
             "/opt/roodha/venv/bin/pip install --upgrade pip",
             "/opt/roodha/venv/bin/pip install -r /opt/roodha/app/requirements.txt",
+            
+            # Configure CloudWatch Agent (Basic)
+            "cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'",
+            '{"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/log/nginx/access.log","log_group_name":"roodha-access-logs","log_stream_name":"{instance_id}"}]}}}}',
+            "EOF",
+
             "cat > /opt/roodha/app/.env <<'EOF'",
             backend_env_payload,
             "EOF",
+            
+            # Start Services
+            "systemctl enable amazon-cloudwatch-agent xray",
+            "systemctl start amazon-cloudwatch-agent xray",
+            
             "cat > /etc/systemd/system/roodha-backend.service <<'EOF'",
             "[Unit]",
             "Description=Project Roodha FastAPI backend",

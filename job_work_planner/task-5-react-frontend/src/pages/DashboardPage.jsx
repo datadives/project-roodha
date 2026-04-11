@@ -10,6 +10,8 @@ import { fetchWipMetrics } from '../lib/metricsApi'
 import { fetchPlanningCalendar } from '../lib/planningApi'
 import { hasPermission, normalizeRole } from '../lib/roles'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Legend } from 'recharts'
+import useOptimisticUI from '../hooks/useOptimisticUI'
+import ErrorBoundary from '../components/common/ErrorBoundary'
 
 function formatINR(value) {
   if (value == null || value === '') return '—'
@@ -587,113 +589,115 @@ function JobActionModal({
             </div>
 
             {/* Financial Summary Card */}
-            <div className="rounded-[28px] border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700">Financial Summary</p>
-              <h3 className="mt-2 text-2xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Job Cost Breakdown</h3>
-              {costSummary ? (
-                <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  {[
-                    { label: 'Machine Cost', value: costSummary.machine_cost, color: 'bg-sky-50 border-sky-100 text-sky-700' },
-                    { label: 'Labour Cost', value: costSummary.labour_cost, color: 'bg-violet-50 border-violet-100 text-violet-700' },
-                    { label: 'Material Cost', value: costSummary.material_cost, color: 'bg-amber-50 border-amber-100 text-amber-700' },
-                    { label: 'Total Cost', value: costSummary.total_cost, color: 'bg-emerald-100 border-emerald-200 text-emerald-800' },
-                  ].map(({ label, value, color }) => (
-                    <div key={label} className={`rounded-[22px] border p-4 ${color}`}>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] opacity-70">{label}</div>
-                      <div className="mt-2 text-xl font-bold">{formatINR(value)}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-4 text-sm text-slate-500">
-                  Cost data is calculated nightly by the EventBridge cron job. Run the job or wait for the scheduled calculation to populate this summary.
-                </p>
-              )}
-              {costSummary?.last_calculated_at ? (
-                <p className="mt-3 text-xs text-slate-400">Last calculated: {new Date(costSummary.last_calculated_at).toLocaleString('en-IN')}</p>
-              ) : null}
-
-              {/* Profitability Bar Chart */}
-              {costSummary && (quotedPriceInput !== '' || costSummary.total_cost != null) ? (() => {
-                const actual = costSummary.total_cost ?? 0
-                const quoted = parseFloat(quotedPriceInput) || 0
-                const chartData = [
-                  { name: 'Production Cost', value: Number(actual), fill: '#0ea5e9' },
-                  { name: 'Quoted Price', value: quoted, fill: '#10b981' },
-                ]
-                return (
-                  <div className="mt-6">
-                    <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Profitability Comparison</p>
-                    <ResponsiveContainer width="100%" height={160}>
-                      <BarChart data={chartData} barSize={40} margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
-                        <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `Rs.${(v / 1000).toFixed(0)}k`} />
-                        <Tooltip
-                          formatter={(value) => [formatINR(value), '']}
-                          contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }}
-                        />
-                        <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                          {chartData.map((entry) => (
-                            <Cell key={entry.name} fill={entry.fill} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                    {quoted > 0 && (
-                      <div className={`mt-3 rounded-[18px] border px-4 py-2.5 text-sm font-semibold ${quoted >= actual ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
-                        {quoted >= actual
-                          ? `Profitable — margin of ${formatINR(quoted - actual)}`
-                          : `Under-priced — shortfall of ${formatINR(actual - quoted)}`}
+            <ErrorBoundary fallback={<div className="p-6 bg-emerald-50 rounded-[28px] border border-emerald-100 text-emerald-800 text-sm">Financial summary is temporarily unavailable.</div>}>
+              <div className="rounded-[28px] border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700">Financial Summary</p>
+                <h3 className="mt-2 text-2xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Job Cost Breakdown</h3>
+                {costSummary ? (
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    {[
+                      { label: 'Machine Cost', value: costSummary.machine_cost, color: 'bg-sky-50 border-sky-100 text-sky-700' },
+                      { label: 'Labour Cost', value: costSummary.labour_cost, color: 'bg-violet-50 border-violet-100 text-violet-700' },
+                      { label: 'Material Cost', value: costSummary.material_cost, color: 'bg-amber-50 border-amber-100 text-amber-700' },
+                      { label: 'Total Cost', value: costSummary.total_cost, color: 'bg-emerald-100 border-emerald-200 text-emerald-800' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} className={`rounded-[22px] border p-4 ${color}`}>
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] opacity-70">{label}</div>
+                        <div className="mt-2 text-xl font-bold">{formatINR(value)}</div>
                       </div>
-                    )}
+                    ))}
                   </div>
-                )
-              })() : null}
+                ) : (
+                  <p className="mt-4 text-sm text-slate-500">
+                    Cost data is calculated nightly by the EventBridge cron job. Run the job or wait for the scheduled calculation to populate this summary.
+                  </p>
+                )}
+                {costSummary?.last_calculated_at ? (
+                  <p className="mt-3 text-xs text-slate-400">Last calculated: {new Date(costSummary.last_calculated_at).toLocaleString('en-IN')}</p>
+                ) : null}
 
-              {/* Quoted Price + Download Row */}
-              <div className="mt-5 flex flex-wrap items-end gap-4">
-                <div className="flex-1 min-w-[200px]">
-                  <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Quoted Price (₹)</label>
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
-                      placeholder="e.g. 25000.00"
-                      value={quotedPriceInput}
-                      onChange={(e) => setQuotedPriceInput(e.target.value)}
-                    />
+                {/* Profitability Bar Chart */}
+                {costSummary && (quotedPriceInput !== '' || costSummary.total_cost != null) ? (() => {
+                  const actual = costSummary.total_cost ?? 0
+                  const quoted = parseFloat(quotedPriceInput) || 0
+                  const chartData = [
+                    { name: 'Production Cost', value: Number(actual), fill: '#0ea5e9' },
+                    { name: 'Quoted Price', value: quoted, fill: '#10b981' },
+                  ]
+                  return (
+                    <div className="mt-6">
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Profitability Comparison</p>
+                      <ResponsiveContainer width="100%" height={160}>
+                        <BarChart data={chartData} barSize={40} margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
+                          <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `Rs.${(v / 1000).toFixed(0)}k`} />
+                          <Tooltip
+                            formatter={(value) => [formatINR(value), '']}
+                            contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }}
+                          />
+                          <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                            {chartData.map((entry) => (
+                              <Cell key={entry.name} fill={entry.fill} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                      {quoted > 0 && (
+                        <div className={`mt-3 rounded-[18px] border px-4 py-2.5 text-sm font-semibold ${quoted >= actual ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+                          {quoted >= actual
+                            ? `Profitable — margin of ${formatINR(quoted - actual)}`
+                            : `Under-priced — shortfall of ${formatINR(actual - quoted)}`}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })() : null}
+
+                {/* Quoted Price + Download Row */}
+                <div className="mt-5 flex flex-wrap items-end gap-4">
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Quoted Price (₹)</label>
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                        placeholder="e.g. 25000.00"
+                        value={quotedPriceInput}
+                        onChange={(e) => setQuotedPriceInput(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        disabled={savingQuotedPrice || quotedPriceInput === ''}
+                        onClick={saveQuotedPrice}
+                        className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        {savingQuotedPrice ? 'Saving…' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
                     <button
                       type="button"
-                      disabled={savingQuotedPrice || quotedPriceInput === ''}
-                      onClick={saveQuotedPrice}
-                      className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      disabled={recalculating}
+                      onClick={onRecalculate}
+                      className="rounded-full border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {savingQuotedPrice ? 'Saving…' : 'Save'}
+                      {recalculating ? 'Calculating...' : '⟳ Recalculate'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={downloadingPdf}
+                      onClick={onDownloadInvoice}
+                      className="rounded-full border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {downloadingPdf ? 'Generating PDF…' : '↓ Download Invoice'}
                     </button>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    disabled={recalculating}
-                    onClick={onRecalculate}
-                    className="rounded-full border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {recalculating ? 'Calculating...' : '⟳ Recalculate'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={downloadingPdf}
-                    onClick={onDownloadInvoice}
-                    className="rounded-full border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {downloadingPdf ? 'Generating PDF…' : '↓ Download Invoice'}
-                  </button>
-                </div>
               </div>
-            </div>
+            </ErrorBoundary>
           </div>
         )}
       </div>
@@ -778,7 +782,6 @@ export default function DashboardPage({ auth: initialAuth = null }) {
   const [boardError, setBoardError] = useState('')
   const [board, setBoard] = useState({ wip_by_stage: [], stages: [] })
   const [selectedJob, setSelectedJob] = useState(null)
-  const [jobDetail, setJobDetail] = useState(null)
   const [jobLoading, setJobLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState('')
   const [auditLoading, setAuditLoading] = useState(false)
@@ -793,6 +796,8 @@ export default function DashboardPage({ auth: initialAuth = null }) {
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [quotedPriceInput, setQuotedPriceInput] = useState('')
   const [savingQuotedPrice, setSavingQuotedPrice] = useState(false)
+
+  const { data: jobDetail, mutate: mutateJobDetail, setData: setJobDetail } = useOptimisticUI(null)
 
   const columns = useMemo(() => buildColumns(board?.stages), [board?.stages])
   const totalWip = useMemo(
@@ -942,26 +947,48 @@ export default function DashboardPage({ auth: initialAuth = null }) {
   }
 
   async function updateCurrentOperation(status, actionKey, extraPayload = {}) {
-    const currentOperation = getCurrentOperation(jobDetail?.operations || [])
-    if (!currentOperation) return
+    const currentOp = getCurrentOperation(jobDetail?.operations || [])
+    if (!currentOp) return
 
     setActionLoading(actionKey)
-    try {
-      const payload = {
-        status,
-        quantity_completed: extraPayload.quantity_completed ?? 0,
-        quantity_rejected: extraPayload.quantity_rejected ?? 0,
-        ...(extraPayload.actual_start_time && { actual_start_time: extraPayload.actual_start_time }),
-        ...(extraPayload.actual_end_time && { actual_end_time: extraPayload.actual_end_time }),
+    
+    // Optimistic Update
+    const optimisticUpdater = (prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        operations: prev.operations.map(op => 
+          op.job_operation_id === currentOp.job_operation_id 
+            ? { ...op, status } 
+            : op
+        ),
+        job: {
+          ...prev.job,
+          current_stage: status === 'COMPLETED' ? (prev.job.current_stage) : prev.job.current_stage // Simple heuristic
+        }
       }
-      const updatedOperation = await updateJobOperationStatus(currentOperation.job_operation_id, payload)
-      toast.success(`${prettifyStage(updatedOperation.operation_id)} marked ${status}`)
-      const refreshedJob = await fetchJobById(selectedJob.job_id)
-      setJobDetail(refreshedJob)
-      await loadAuditTrails(refreshedJob)
-      await loadBoard()
+    }
+
+    try {
+      await mutateJobDetail(optimisticUpdater, async () => {
+        const payload = {
+          status,
+          quantity_completed: extraPayload.quantity_completed ?? 0,
+          quantity_rejected: extraPayload.quantity_rejected ?? 0,
+          ...(extraPayload.actual_start_time && { actual_start_time: extraPayload.actual_start_time }),
+          ...(extraPayload.actual_end_time && { actual_end_time: extraPayload.actual_end_time }),
+        }
+        await updateJobOperationStatus(currentOp.job_operation_id, payload)
+        
+        // Background sync to ensure consistency
+        const refreshedJob = await fetchJobById(selectedJob.job_id)
+        setJobDetail(refreshedJob)
+        await loadAuditTrails(refreshedJob)
+        await loadBoard()
+      })
+      toast.success(`${prettifyStage(currentOp.operation_id)} marked ${status}`)
     } catch {
-      // Toasts are already handled by the shared API layer.
+      // Rollback is handled by mutateJobDetail
     } finally {
       setActionLoading('')
     }
@@ -1011,23 +1038,26 @@ export default function DashboardPage({ auth: initialAuth = null }) {
 
   return (
     <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-[32px] border border-white/80 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.24),transparent_28%),radial-gradient(circle_at_85%_18%,_rgba(14,165,233,0.18),transparent_24%),linear-gradient(135deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
-        <div className="absolute -right-8 top-10 h-32 w-32 rounded-full bg-amber-200/40 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Single Source Of Truth</p>
-            <h1 className="mt-3 text-4xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
-              Main WIP dashboard
-            </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              Track live jobs by current factory stage, spot delayed work immediately, and move operations forward without leaving the board.
-            </p>
+      <ErrorBoundary>
+        <section className="relative overflow-hidden rounded-[32px] border border-white/80 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.24),transparent_28%),radial-gradient(circle_at_85%_18%,_rgba(14,165,233,0.18),transparent_24%),linear-gradient(135deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
+          <div className="absolute -right-8 top-10 h-32 w-32 rounded-full bg-amber-200/40 blur-3xl" />
+          <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Single Source Of Truth</p>
+              <h1 className="mt-3 text-4xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+                Main WIP dashboard
+              </h1>
+              <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+                Track live jobs by current factory stage, spot delayed work immediately, and move operations forward without leaving the board.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <div className="rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700">Active WIP: {totalWip}</div>
+              <div className="rounded-full border border-white/70 bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Manager view</div>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <div className="rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700">Active WIP: {totalWip}</div>
-            <div className="rounded-full border border-white/70 bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Manager view</div>
-          </div>
-        </div>
+        </section>
+      </ErrorBoundary>iv>
       </section>
 
       {boardError ? (
@@ -1058,7 +1088,8 @@ export default function DashboardPage({ auth: initialAuth = null }) {
       ) : null}
 
       <section className="overflow-x-auto pb-2">
-        <div className="flex min-w-max gap-5">
+        <ErrorBoundary fallback={<div className="p-8 text-center bg-white rounded-3xl">Kanban board is currently unavailable.</div>}>
+          <div className="flex min-w-max gap-5">
           {(asArray(columns)?.map((column) => (
             <article key={column.stage_id} className="w-[320px] rounded-[28px] border border-white/70 bg-white/88 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
               <div className="mb-4 flex items-start justify-between gap-3">
@@ -1086,7 +1117,8 @@ export default function DashboardPage({ auth: initialAuth = null }) {
               </div>
             </article>
           ))) || []}
-        </div>
+          </div>
+        </ErrorBoundary>
       </section>
 
       {loading && <div className="rounded-[24px] border border-white/70 bg-white/85 p-5 text-sm text-slate-500 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">Refreshing WIP board...</div>}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes, useOutletContext } from 'react-router-dom'
 import AccessDeniedPage from './components/AccessDeniedPage'
 import Layout from './components/Layout'
@@ -10,6 +10,7 @@ import NotificationsPage from './pages/NotificationsPage'
 import LoginPage from './pages/LoginPage'
 import { getAuthContext, getStoredDevAuthContext } from './lib/auth'
 import { getDefaultRouteForRole, hasAnyRole, listAllowedRoleLabels } from './lib/roles'
+import ErrorBoundary from './components/common/ErrorBoundary'
 
 function ProtectedRoute() {
   const [auth, setAuth] = useState(() => getStoredDevAuthContext())
@@ -24,7 +25,12 @@ function ProtectedRoute() {
     getAuthContext().then(setAuth).catch(() => setAuth(null)).finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <div className="p-6">Loading...</div>
+  if (loading) return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50">
+      <div className="text-sm font-medium text-slate-500 animate-pulse">Initializing workplace...</div>
+    </div>
+  )
+  
   if (!auth?.token) return <Navigate to="/login" replace />
 
   return <Outlet context={auth} />
@@ -59,37 +65,41 @@ function HomeRoute() {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route element={<ProtectedRoute />}>
-        <Route element={<Layout />}>
-          <Route path="/" element={<HomeRoute />} />
-          <Route
-            element={
-              <RoleRoute
-                allowedRoles={['OWNER', 'ADMIN', 'SUPERVISOR']}
-                title="Supervisor workspace only"
-                message="Job intake and master data updates are limited to supervisors, owners, and admins so planning inputs stay controlled."
-              />
-            }
-          >
-            <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/master-data" element={<MasterDataPage />} />
+    <ErrorBoundary>
+      <Suspense fallback={<div>Loading component...</div>}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route element={<ProtectedRoute />}>
+            <Route element={<Layout />}>
+              <Route path="/" element={<HomeRoute />} />
+              <Route
+                element={
+                  <RoleRoute
+                    allowedRoles={['OWNER', 'ADMIN', 'SUPERVISOR']}
+                    title="Supervisor workspace only"
+                    message="Job intake and master data updates are limited to supervisors, owners, and admins so planning inputs stay controlled."
+                  />
+                }
+              >
+                <Route path="/jobs" element={<JobsPage />} />
+                <Route path="/master-data" element={<MasterDataPage />} />
+              </Route>
+              <Route
+                element={
+                  <RoleRoute
+                    allowedRoles={['OWNER', 'ADMIN', 'SUPERVISOR', 'PLANNER']}
+                    title="Planning access required"
+                    message="This workspace is reserved for roles that are allowed to view WIP metrics, planning load, and analytics."
+                  />
+                }
+              >
+                <Route path="/analytics" element={<AnalyticsPage />} />
+              </Route>
+              <Route path="/notifications" element={<NotificationsPage />} />
+            </Route>
           </Route>
-          <Route
-            element={
-              <RoleRoute
-                allowedRoles={['OWNER', 'ADMIN', 'SUPERVISOR', 'PLANNER']}
-                title="Planning access required"
-                message="This workspace is reserved for roles that are allowed to view WIP metrics, planning load, and analytics."
-              />
-            }
-          >
-            <Route path="/analytics" element={<AnalyticsPage />} />
-          </Route>
-          <Route path="/notifications" element={<NotificationsPage />} />
-        </Route>
-      </Route>
-    </Routes>
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   )
 }
