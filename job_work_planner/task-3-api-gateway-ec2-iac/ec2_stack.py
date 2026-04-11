@@ -1,28 +1,36 @@
+from pathlib import Path
+
 from aws_cdk import (
-    Stack,
     CfnOutput,
+    Stack,
     aws_ec2 as ec2,
+    aws_iam as iam,
+    aws_s3_assets as s3_assets,
 )
 from constructs import Construct
- 
- 
+
+
 class Ec2Stack(Stack):
     """
-    EC2 stack hosting backend application.
-    This EC2 acts as the backend for API Gateway (early-stage, no ALB yet).
+    EC2 stack hosting the production FastAPI backend.
     """
- 
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        backend_env: dict[str, str],
+        **kwargs,
+    ) -> None:
         super().__init__(scope, construct_id, **kwargs)
- 
-        # Use default VPC (simple & safe for early stage)
+
         vpc = ec2.Vpc.from_lookup(
             self,
             "DefaultVpc",
             is_default=True,
         )
- 
-        # Security Group: allow HTTP traffic
+
         sg = ec2.SecurityGroup(
             self,
             "BackendSecurityGroup",
@@ -30,35 +38,99 @@ class Ec2Stack(Stack):
             description="Allow HTTP traffic to backend EC2",
             allow_all_outbound=True,
         )
- 
-        sg.add_ingress_rule(
-            ec2.Peer.any_ipv4(),
-            ec2.Port.tcp(80),
-            "Allow HTTP access",
+        sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "Allow HTTP access")
+
+        backend_dir = Path(__file__).resolve().parents[1] / "task-4-backend-skeleton"
+        backend_asset = s3_assets.Asset(
+            self,
+            "RoodhaBackendAsset",
+            path=str(backend_dir),
+            exclude=[".venv", "__pycache__", "tests", "*.pyc", ".env"],
         )
- 
-        # EC2 instance
+
         instance = ec2.Instance(
             self,
             "BackendInstance",
             vpc=vpc,
             instance_type=ec2.InstanceType("t3.micro"),
-            machine_image=ec2.MachineImage.latest_amazon_linux2(),
+            machine_image=ec2.MachineImage.latest_amazon_linux2023(),
             security_group=sg,
         )
- 
-        # Simple backend response
-        instance.add_user_data(
-            "#!/bin/bash",
-            "yum install -y httpd",
-            "systemctl start httpd",
-            "systemctl enable httpd",
-            "echo 'Hello from EC2 backend' > /var/www/html/index.html",
+
+        instance.role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")
         )
- 
-        # Export public IP for API Gateway
+        backend_asset.grant_read(instance.role)
+
+        backend_env_lines = [
+            "ENV=production",
+            f"DATABASE_URL={backend_env['DATABASE_URL']}",
+            f"CORS_ALLOW_ORIGINS={backend_env['CORS_ALLOW_ORIGINS']}",
+            f"AWS_REGION={backend_env['AWS_REGION']}",
+            f"COGNITO_REGION={backend_env['AWS_REGION']}",
+            f"COGNITO_USER_POOL_ID={backend_env['COGNITO_USER_POOL_ID']}",
+            f"COGNITO_APP_CLIENT_ID={backend_env['COGNITO_APP_CLIENT_ID']}",
+        ]
+        backend_env_payload = "\n".join(backend_env_lines)
+
+        instance.user_data.add_commands(
+            "#!/bin/bash",
+            "set -euxo pipefail",
+            "dnf update -y",
+            "dnf install -y python3.11 python3.11-pip nginx unzip",
+            "mkdir -p /opt/roodha",
+            "mkdir -p /etc/nginx/conf.d",
+            "aws s3 cp s3://%s/%s /tmp/roodha-backend.zip --region %s"
+            % (backend_asset.s3_bucket_name, backend_asset.s3_object_key, Stack.of(self).region),
+            "rm -rf /opt/roodha/app",
+            "unzip -o /tmp/roodha-backend.zip -d /opt/roodha/app",
+            "PYTHON_BIN=$(command -v python3.11 || command -v python3)",
+            "$PYTHON_BIN -m venv /opt/roodha/venv",
+            "/opt/roodha/venv/bin/pip install --upgrade pip",
+            "/opt/roodha/venv/bin/pip install -r /opt/roodha/app/requirements.txt",
+            "cat > /opt/roodha/app/.env <<'EOF'",
+            backend_env_payload,
+            "EOF",
+            "cat > /etc/systemd/system/roodha-backend.service <<'EOF'",
+            "[Unit]",
+            "Description=Project Roodha FastAPI backend",
+            "After=network.target",
+            "",
+            "[Service]",
+            "User=root",
+            "WorkingDirectory=/opt/roodha/app",
+            "Environment=PYTHONPATH=/opt/roodha/app",
+            "ExecStart=/opt/roodha/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000",
+            "Restart=always",
+            "RestartSec=5",
+            "",
+            "[Install]",
+            "WantedBy=multi-user.target",
+            "EOF",
+            "cat > /etc/nginx/conf.d/roodha.conf <<'EOF'",
+            "server {",
+            "    listen 80 default_server;",
+            "    server_name _;",
+            "",
+            "    location / {",
+            "        proxy_pass http://127.0.0.1:8000;",
+            "        proxy_http_version 1.1;",
+            "        proxy_set_header Host $host;",
+            "        proxy_set_header X-Real-IP $remote_addr;",
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+            "        proxy_set_header X-Forwarded-Proto $scheme;",
+            "    }",
+            "}",
+            "EOF",
+            "rm -f /etc/nginx/conf.d/default.conf",
+            "systemctl daemon-reload",
+            "systemctl enable roodha-backend nginx",
+            "systemctl restart roodha-backend",
+            "systemctl restart nginx",
+        )
+
         self.ec2_public_ip = instance.instance_public_ip
- 
+
         CfnOutput(
             self,
             "Ec2PublicIp",

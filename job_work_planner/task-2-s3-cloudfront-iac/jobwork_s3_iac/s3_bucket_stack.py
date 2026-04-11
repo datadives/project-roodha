@@ -1,7 +1,8 @@
 # s3_bucket_stack.py
-# Production-ready CDK Stack to create a private S3 bucket for app uploads
-# and minimal IAM roles (Lambda + EC2).
-# Fully reviewed, secure, and cross-stack compatible.
+# Production-ready CDK stack for the Project Roodha frontend bucket.
+# The live production bucket is configured as a public static website and
+# this stack mirrors that behavior so future deploys do not drift it back
+# to a private-only configuration.
 
 from aws_cdk import (
     Stack,
@@ -21,30 +22,42 @@ ENV = os.environ.get("DEPLOY_ENV", "dev")
 
 class S3BucketStack(Stack):
     """
-    Stack to create a private S3 bucket for application files
-    and IAM roles for EC2/Lambda access.
+    Stack to create the production frontend S3 bucket and IAM roles for
+    EC2/Lambda access.
     """
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         # ---------------------------------------------------------
-        # Bucket name (environment-aware to avoid collisions)
+        # Bucket names will be dynamically generated
         # ---------------------------------------------------------
-        bucket_name = bucket_name = f"jobwork-app-files-roshan-{ENV}"
+
+        removal_policy = (
+            RemovalPolicy.RETAIN if ENV == "prod" else RemovalPolicy.DESTROY
+        )
+        auto_delete_objects = ENV != "prod"
 
         # ---------------------------------------------------------
-        # Create PRIVATE S3 bucket with secure defaults
+        # Create PUBLIC static website bucket aligned with production
         # ---------------------------------------------------------
         self.bucket = s3.Bucket(
             self,
-            "AppFilesBucket",
-            bucket_name=bucket_name,
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            "RoodhaProdBucketV1",
+            block_public_access=s3.BlockPublicAccess(
+                block_public_acls=False,
+                ignore_public_acls=False,
+                block_public_policy=False,
+                restrict_public_buckets=False,
+            ),
             encryption=s3.BucketEncryption.S3_MANAGED,
             versioned=True,
-            enforce_ssl=True,
-            removal_policy=RemovalPolicy.RETAIN if ENV == "prod" else RemovalPolicy.DESTROY,
+            object_ownership=s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
+            website_index_document="index.html",
+            website_error_document="index.html",
+            public_read_access=False,
+            removal_policy=removal_policy,
+            auto_delete_objects=auto_delete_objects,
             cors=[
                 s3.CorsRule(
                     allowed_methods=[
@@ -91,6 +104,18 @@ class S3BucketStack(Stack):
             effect=iam.Effect.ALLOW,
         )
 
+        # Public website read access is granted through bucket policy because
+        # Object Ownership is BucketOwnerEnforced and ACLs are disabled.
+        self.bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="PublicReadGetObject",
+                actions=["s3:GetObject"],
+                principals=[iam.AnyPrincipal()],
+                resources=[self.bucket.arn_for_objects("*")],
+                effect=iam.Effect.ALLOW,
+            )
+        )
+
         # ---------------------------------------------------------
         # Lambda IAM Role
         # ---------------------------------------------------------
@@ -127,6 +152,20 @@ class S3BucketStack(Stack):
             "BucketName",
             value=self.bucket.bucket_name,
             description="S3 bucket name for app files",
+        )
+
+        CfnOutput(
+            self,
+            "WebsiteUrl",
+            value=f"http://{self.bucket.bucket_name}.s3-website.{Stack.of(self).region}.amazonaws.com",
+            description="Public S3 static website URL for the frontend",
+        )
+
+        CfnOutput(
+            self,
+            "WebsiteDomainName",
+            value=f"{self.bucket.bucket_name}.s3-website.{Stack.of(self).region}.amazonaws.com",
+            description="Public S3 static website domain name for the frontend",
         )
 
         CfnOutput(

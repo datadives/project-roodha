@@ -1,0 +1,14 @@
+[
+  {
+    "Name": "email",
+    "AttributeDataType": "String",
+    "Required": true,
+    "Mutable": true
+  },
+  {
+    "Name": "tenant_id",
+    "AttributeDataType": "String",
+    "Required": false,
+    "Mutable": true
+  }
+]

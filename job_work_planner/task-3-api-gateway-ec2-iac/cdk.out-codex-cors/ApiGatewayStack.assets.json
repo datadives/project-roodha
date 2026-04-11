@@ -1,0 +1,21 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "1579e6e4371ccd4512a8a32550dae96ff445e9679d5cd6dfae0f8e9874638534": {
+      "displayName": "ApiGatewayStack Template",
+      "source": {
+        "path": "ApiGatewayStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "676867499736-ap-south-1-c664cb8c": {
+          "bucketName": "cdk-hnb659fds-assets-676867499736-ap-south-1",
+          "objectKey": "1579e6e4371ccd4512a8a32550dae96ff445e9679d5cd6dfae0f8e9874638534.json",
+          "region": "ap-south-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::676867499736:role/cdk-hnb659fds-file-publishing-role-676867499736-ap-south-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

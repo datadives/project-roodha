@@ -6,11 +6,13 @@ import './index.css'
 import './lib/amplify'
 import App from './App'
 
+const appTree = (
+  <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <Toaster position="top-right" />
+    <App />
+  </BrowserRouter>
+)
+
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <Toaster position="top-right" />
-      <App />
-    </BrowserRouter>
-  </React.StrictMode>,
+  import.meta.env.MODE === 'development' ? appTree : <React.StrictMode>{appTree}</React.StrictMode>,
 )

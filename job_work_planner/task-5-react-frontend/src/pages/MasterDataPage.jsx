@@ -1,6 +1,7 @@
 import { startTransition, useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
-import { getAuthContext } from '../lib/auth'
+import { DEV_TENANT_ID, getAuthContext } from '../lib/auth'
+import { normalizeRole } from '../lib/roles'
 import {
   createCustomer,
   createMachine,
@@ -36,16 +37,20 @@ const inputClass =
 const labelClass = 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-500'
 const panelClass = 'rounded-[28px] border border-white/70 bg-white/85 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur'
 
+function asArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
 function emptyCustomerForm() {
   return { name: '', contact: '', is_active: true }
 }
 
 function emptyMachineForm() {
-  return { name: '', type: '', is_active: true }
+  return { name: '', type: '', is_active: true, hourly_rate: '' }
 }
 
 function emptyPartForm(customerId = '') {
-  return { part_number: '', customer_id: customerId, steps: ['Cutting', 'Machining', 'QC'] }
+  return { part_number: '', customer_id: customerId, steps: ['Cutting', 'Machining', 'Quality Check'], default_material_cost_per_unit: '' }
 }
 
 function emptyShiftForm() {
@@ -53,19 +58,23 @@ function emptyShiftForm() {
 }
 
 function emptyWorkerForm() {
-  return { name: '', role: 'Operator', is_active: true }
+  return { name: '', role: 'Operator', is_active: true, hourly_rate: '' }
 }
 
 function slugifyOperation(label) {
-  return label
+  const normalized = label
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
+  if (normalized === 'QC' || normalized === 'QUALITYCHECK') {
+    return 'QUALITY_CHECK'
+  }
+  return normalized
 }
 
 function routeLabels(route = []) {
-  return route.map((step, index) => step.operation || step.operation_name || step.name || step.operation_id || `Step ${index + 1}`)
+  return asArray(route).map((step, index) => step.operation || step.operation_name || step.name || step.operation_id || `Step ${index + 1}`)
 }
 
 function SectionButton({ section, activeSection, onSelect, count }) {
@@ -119,6 +128,20 @@ function InlineToggle({ checked, onChange, label }) {
   )
 }
 
+function EmptyStatePanel({ title, detail, ctaLabel, onCta }) {
+  return (
+    <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50/85 p-5 text-sm text-slate-600">
+      <p className="font-semibold text-slate-900">{title}</p>
+      <p className="mt-2 leading-6">{detail}</p>
+      {ctaLabel ? (
+        <button type="button" onClick={onCta} className="mt-4 rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm">
+          {ctaLabel}
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 export default function MasterDataPage() {
   const [auth, setAuth] = useState(null)
   const [activeSection, setActiveSection] = useState('customers')
@@ -147,16 +170,28 @@ export default function MasterDataPage() {
   const [workers, setWorkers] = useState([])
   const [workerForm, setWorkerForm] = useState(emptyWorkerForm())
   const [editingWorkerId, setEditingWorkerId] = useState(null)
+  const normalizedRole = normalizeRole(auth?.user_role)
+  const canDeleteMasterData = ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(normalizedRole)
+  const canSubmitCustomer = Boolean(customerForm.name.trim()) && savingKey !== 'customer'
+  const canSubmitMachine = Boolean(machineForm.name.trim()) && Boolean(machineForm.type.trim()) && savingKey !== 'machine'
+  const canSubmitPart =
+    Boolean(partForm.part_number.trim()) &&
+    Boolean(partForm.customer_id) &&
+    asArray(partForm.steps).every((step) => step.trim()) &&
+    savingKey !== 'part'
+  const canSubmitShift = Boolean(shiftForm.name.trim()) && Boolean(shiftForm.start_time) && Boolean(shiftForm.end_time) && savingKey !== 'shift'
+  const canSubmitWorker = Boolean(workerForm.name.trim()) && Boolean(workerForm.role.trim()) && savingKey !== 'worker'
+  const isAnyFactoryDataLoading = Object.values(loading).some(Boolean)
 
   const counts = useMemo(
     () => ({
-      customers: customers.length,
-      machines: machines.length,
-      parts: parts.length,
-      shifts: shifts.length,
-      workers: workers.length,
+      customers: asArray(customers).length,
+      machines: asArray(machines).length,
+      parts: asArray(parts).length,
+      shifts: asArray(shifts).length,
+      workers: asArray(workers).length,
     }),
-    [customers.length, machines.length, parts.length, shifts.length, workers.length],
+    [customers, machines, parts, shifts, workers],
   )
 
   useEffect(() => {
@@ -166,15 +201,15 @@ export default function MasterDataPage() {
   async function loadCustomers(includeInactive = includeInactiveCustomers) {
     setLoading((current) => ({ ...current, customers: true }))
     try {
-      const [visibleCustomers, allCustomers] = await Promise.all([
-        fetchCustomers(includeInactive),
-        fetchCustomers(true),
-      ])
-      setCustomers(visibleCustomers)
-      setCustomerCatalog(allCustomers)
+      const safeAllCustomers = asArray(await fetchCustomers(true))
+      const safeVisibleCustomers = includeInactive
+        ? safeAllCustomers
+        : safeAllCustomers.filter((customer) => customer?.is_active !== false)
+      setCustomers(safeVisibleCustomers)
+      setCustomerCatalog(safeAllCustomers)
       setPartForm((current) => ({
         ...current,
-        customer_id: current.customer_id || allCustomers[0]?.customer_id || '',
+        customer_id: current.customer_id || safeAllCustomers[0]?.customer_id || '',
       }))
     } catch {
       // Toasts are already handled by the API helper.
@@ -186,7 +221,7 @@ export default function MasterDataPage() {
   async function loadMachines() {
     setLoading((current) => ({ ...current, machines: true }))
     try {
-      setMachines(await fetchMachines())
+      setMachines(asArray(await fetchMachines()))
     } catch {
       // Toasts are already handled by the API helper.
     } finally {
@@ -197,7 +232,7 @@ export default function MasterDataPage() {
   async function loadParts() {
     setLoading((current) => ({ ...current, parts: true }))
     try {
-      setParts(await fetchParts())
+      setParts(asArray(await fetchParts()))
     } catch {
       // Toasts are already handled by the API helper.
     } finally {
@@ -208,7 +243,7 @@ export default function MasterDataPage() {
   async function loadShifts() {
     setLoading((current) => ({ ...current, shifts: true }))
     try {
-      setShifts(await fetchShifts())
+      setShifts(asArray(await fetchShifts()))
     } catch {
       // Toasts are already handled by the API helper.
     } finally {
@@ -219,7 +254,7 @@ export default function MasterDataPage() {
   async function loadWorkers() {
     setLoading((current) => ({ ...current, workers: true }))
     try {
-      setWorkers(await fetchWorkers(true))
+      setWorkers(asArray(await fetchWorkers(true)))
     } catch {
       // Toasts are already handled by the API helper.
     } finally {
@@ -241,17 +276,22 @@ export default function MasterDataPage() {
   async function handleCustomerSubmit(event) {
     event.preventDefault()
     setSavingKey('customer')
+    const customerPayload = {
+      ...customerForm,
+      tenant_id: auth?.tenant_id || DEV_TENANT_ID,
+    }
     try {
       if (editingCustomerId) {
-        await updateCustomer(editingCustomerId, customerForm)
+        await updateCustomer(editingCustomerId, customerPayload)
         toast.success('Customer updated')
       } else {
-        await createCustomer(customerForm)
+        await createCustomer(customerPayload)
         toast.success('Customer created')
       }
       await loadCustomers(includeInactiveCustomers)
       setCustomerForm(emptyCustomerForm())
       setEditingCustomerId(null)
+      startTransition(() => setActiveSection('customers'))
     } catch {
       // Toasts are already handled by the API helper.
     } finally {
@@ -262,12 +302,16 @@ export default function MasterDataPage() {
   async function handleMachineSubmit(event) {
     event.preventDefault()
     setSavingKey('machine')
+    const machinePayload = {
+      ...machineForm,
+      hourly_rate: machineForm.hourly_rate !== '' ? parseFloat(machineForm.hourly_rate) : null,
+    }
     try {
       if (editingMachineId) {
-        await updateMachine(editingMachineId, machineForm)
+        await updateMachine(editingMachineId, machinePayload)
         toast.success('Machine updated')
       } else {
-        await createMachine(machineForm)
+        await createMachine(machinePayload)
         toast.success('Machine created')
       }
       await loadMachines()
@@ -282,7 +326,7 @@ export default function MasterDataPage() {
 
   async function handlePartSubmit(event) {
     event.preventDefault()
-    const cleanedSteps = partForm.steps.map((step) => step.trim()).filter(Boolean)
+    const cleanedSteps = asArray(partForm.steps).map((step) => step.trim()).filter(Boolean)
     if (cleanedSteps.length === 0) {
       toast.error('Add at least one default operation step')
       return
@@ -296,6 +340,9 @@ export default function MasterDataPage() {
         operation: label,
         operation_id: slugifyOperation(label),
       })),
+      ...(partForm.default_material_cost_per_unit !== '' && {
+        default_material_cost_per_unit: parseFloat(partForm.default_material_cost_per_unit),
+      }),
     }
 
     setSavingKey('part')
@@ -308,7 +355,7 @@ export default function MasterDataPage() {
         toast.success('Part created')
       }
       await loadParts()
-      setPartForm(emptyPartForm(customerCatalog[0]?.customer_id || ''))
+      setPartForm(emptyPartForm(asArray(customerCatalog)[0]?.customer_id || ''))
       setEditingPartId(null)
     } catch {
       // Toasts are already handled by the API helper.
@@ -341,12 +388,16 @@ export default function MasterDataPage() {
   async function handleWorkerSubmit(event) {
     event.preventDefault()
     setSavingKey('worker')
+    const workerPayload = {
+      ...workerForm,
+      hourly_rate: workerForm.hourly_rate !== '' ? parseFloat(workerForm.hourly_rate) : null,
+    }
     try {
       if (editingWorkerId) {
-        await updateWorker(editingWorkerId, workerForm)
+        await updateWorker(editingWorkerId, workerPayload)
         toast.success('Worker updated')
       } else {
-        await createWorker(workerForm)
+        await createWorker(workerPayload)
         toast.success('Worker added')
       }
       await loadWorkers()
@@ -435,6 +486,7 @@ export default function MasterDataPage() {
       name: machine.name,
       type: machine.type,
       is_active: machine.is_active,
+      hourly_rate: machine.hourly_rate != null ? String(machine.hourly_rate) : '',
     })
   }
 
@@ -444,6 +496,7 @@ export default function MasterDataPage() {
       part_number: part.part_number,
       customer_id: part.customer_id,
       steps: routeLabels(part.default_operations_route),
+      default_material_cost_per_unit: part.default_material_cost_per_unit != null ? String(part.default_material_cost_per_unit) : '',
     })
   }
 
@@ -462,13 +515,14 @@ export default function MasterDataPage() {
       name: worker.name,
       role: worker.role,
       is_active: worker.is_active,
+      hourly_rate: worker.hourly_rate != null ? String(worker.hourly_rate) : '',
     })
   }
 
   function updatePartStep(index, value) {
     setPartForm((current) => ({
       ...current,
-      steps: current.steps.map((step, stepIndex) => (stepIndex === index ? value : step)),
+      steps: asArray(current.steps).map((step, stepIndex) => (stepIndex === index ? value : step)),
     }))
   }
 
@@ -479,7 +533,7 @@ export default function MasterDataPage() {
   function removePartStep(index) {
     setPartForm((current) => ({
       ...current,
-      steps: current.steps.filter((_, stepIndex) => stepIndex !== index),
+      steps: asArray(current.steps).filter((_, stepIndex) => stepIndex !== index),
     }))
   }
 
@@ -510,7 +564,7 @@ export default function MasterDataPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {customers.map((customer) => (
+                {asArray(customers).map((customer) => (
                   <tr key={customer.customer_id}>
                     <td className="py-3 pr-4">
                       <div className="font-medium text-slate-800">{customer.name}</div>
@@ -525,20 +579,31 @@ export default function MasterDataPage() {
                         <button type="button" onClick={() => selectCustomer(customer)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400">
                           Edit
                         </button>
-                        <button type="button" onClick={() => handleCustomerDelete(customer)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
-                          Delete
-                        </button>
+                        {canDeleteMasterData ? (
+                          <button type="button" onClick={() => handleCustomerDelete(customer)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
+                            Delete
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {!loading.customers && customers.length === 0 && <p className="py-8 text-sm text-slate-500">No customers to show.</p>}
+            {!loading.customers && asArray(customers).length === 0 ? (
+              <div className="py-6">
+                <EmptyStatePanel
+                  title="No customers yet"
+                  detail="Start by adding your first client so parts and jobs have a real customer to connect to."
+                  ctaLabel="Add your first client"
+                  onCta={() => document.getElementById('customer-form-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                />
+              </div>
+            ) : null}
           </div>
         </section>
 
-        <section className={panelClass}>
+        <section className={panelClass} id="customer-form-card">
           <SectionHeader
             eyebrow={editingCustomerId ? 'Edit customer' : 'New customer'}
             title={editingCustomerId ? 'Refine customer details' : 'Add a customer'}
@@ -546,7 +611,7 @@ export default function MasterDataPage() {
           />
           <form className="space-y-4" onSubmit={handleCustomerSubmit}>
             <div>
-              <label className={labelClass}>Customer name</label>
+              <label className={labelClass}>Customer name *</label>
               <input className={inputClass} value={customerForm.name} onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))} placeholder="Apex Components" required />
             </div>
             <div>
@@ -555,7 +620,7 @@ export default function MasterDataPage() {
             </div>
             <InlineToggle checked={customerForm.is_active} onChange={(event) => setCustomerForm((current) => ({ ...current, is_active: event.target.checked }))} label="Customer is active" />
             <div className="flex gap-3">
-              <button type="submit" className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white">
+              <button type="submit" disabled={!canSubmitCustomer} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                 {savingKey === 'customer' ? 'Saving...' : editingCustomerId ? 'Update customer' : 'Create customer'}
               </button>
               <button type="button" onClick={() => { setCustomerForm(emptyCustomerForm()); setEditingCustomerId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -575,7 +640,7 @@ export default function MasterDataPage() {
             detail="The UI respects the backend guardrail: if a machine still has active job assignments, its deactivate action stays blocked."
           />
           <div className="grid gap-4 md:grid-cols-2">
-            {machines.map((machine) => (
+            {asArray(machines).map((machine) => (
               <article key={machine.machine_id} className="rounded-[24px] border border-slate-100 bg-slate-50/85 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -603,10 +668,19 @@ export default function MasterDataPage() {
               </article>
             ))}
           </div>
-          {!loading.machines && machines.length === 0 && <p className="pt-8 text-sm text-slate-500">No machines added yet.</p>}
+          {!loading.machines && asArray(machines).length === 0 ? (
+            <div className="pt-6">
+              <EmptyStatePanel
+                title="No machines registered yet"
+                detail="Add your first machine so planners can assign work without guessing capacity."
+                ctaLabel="Add first machine"
+                onCta={() => document.getElementById('machine-form-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              />
+            </div>
+          ) : null}
         </section>
 
-        <section className={panelClass}>
+        <section className={panelClass} id="machine-form-card">
           <SectionHeader
             eyebrow={editingMachineId ? 'Edit machine' : 'New machine'}
             title={editingMachineId ? 'Tune machine details' : 'Register a machine'}
@@ -614,16 +688,28 @@ export default function MasterDataPage() {
           />
           <form className="space-y-4" onSubmit={handleMachineSubmit}>
             <div>
-              <label className={labelClass}>Machine name</label>
+              <label className={labelClass}>Machine name *</label>
               <input className={inputClass} value={machineForm.name} onChange={(event) => setMachineForm((current) => ({ ...current, name: event.target.value }))} placeholder="CNC-01" required />
             </div>
             <div>
-              <label className={labelClass}>Machine type</label>
+              <label className={labelClass}>Machine type *</label>
               <input className={inputClass} value={machineForm.type} onChange={(event) => setMachineForm((current) => ({ ...current, type: event.target.value }))} placeholder="Turning center" required />
+            </div>
+            <div>
+              <label className={labelClass}>Hourly Rate (₹)</label>
+              <input
+                className={inputClass}
+                type="number"
+                min="0"
+                step="0.01"
+                value={machineForm.hourly_rate}
+                onChange={(event) => setMachineForm((current) => ({ ...current, hourly_rate: event.target.value }))}
+                placeholder="e.g. 350.00"
+              />
             </div>
             <InlineToggle checked={machineForm.is_active} onChange={(event) => setMachineForm((current) => ({ ...current, is_active: event.target.checked }))} label="Machine is active" />
             <div className="flex gap-3">
-              <button type="submit" className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white">
+              <button type="submit" disabled={!canSubmitMachine} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                 {savingKey === 'machine' ? 'Saving...' : editingMachineId ? 'Update machine' : 'Create machine'}
               </button>
               <button type="button" onClick={() => { setMachineForm(emptyMachineForm()); setEditingMachineId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -643,35 +729,45 @@ export default function MasterDataPage() {
             detail="Each part needs a default operations route before it can be planned into production. The route builder below mirrors that backend rule."
           />
           <div className="space-y-4">
-            {parts.map((part) => (
+            {asArray(parts).map((part) => (
               <article key={part.part_id} className="rounded-[24px] border border-slate-100 bg-slate-50/80 p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
                     <h3 className="text-lg font-semibold text-slate-900">{part.part_number}</h3>
-                    <p className="text-sm text-slate-500">Customer: {customerCatalog.find((customer) => customer.customer_id === part.customer_id)?.name || part.customer_id}</p>
+                    <p className="text-sm text-slate-500">Customer: {asArray(customerCatalog).find((customer) => customer.customer_id === part.customer_id)?.name || part.customer_id}</p>
                   </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={() => selectPart(part)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400">
                       Edit
                     </button>
-                    <button type="button" onClick={() => handlePartDelete(part)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
-                      Delete
-                    </button>
+                    {canDeleteMasterData ? (
+                      <button type="button" onClick={() => handlePartDelete(part)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
+                        Delete
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {routeLabels(part.default_operations_route).map((label, index) => (
+                  {(routeLabels(part.default_operations_route)?.map((label, index) => (
                     <span key={`${part.part_id}-${label}-${index}`} className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
                       {index + 1}. {label}
                     </span>
-                  ))}
+                  ))) || []}
                 </div>
               </article>
             ))}
+            {!loading.parts && asArray(parts).length === 0 ? (
+              <EmptyStatePanel
+                title="No parts defined yet"
+                detail="Create a part with its default route so jobs can auto-generate the right operation steps."
+                ctaLabel="Create first part"
+                onCta={() => document.getElementById('part-form-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              />
+            ) : null}
           </div>
         </section>
 
-        <section className={panelClass}>
+        <section className={panelClass} id="part-form-card">
           <SectionHeader
             eyebrow={editingPartId ? 'Edit part' : 'New part'}
             title={editingPartId ? 'Update routing defaults' : 'Create a routable part'}
@@ -679,14 +775,14 @@ export default function MasterDataPage() {
           />
           <form className="space-y-4" onSubmit={handlePartSubmit}>
             <div>
-              <label className={labelClass}>Part number</label>
+              <label className={labelClass}>Part number *</label>
               <input className={inputClass} value={partForm.part_number} onChange={(event) => setPartForm((current) => ({ ...current, part_number: event.target.value }))} placeholder="PART-AX-204" required />
             </div>
             <div>
-              <label className={labelClass}>Customer</label>
+              <label className={labelClass}>Customer *</label>
               <select className={inputClass} value={partForm.customer_id} onChange={(event) => setPartForm((current) => ({ ...current, customer_id: event.target.value }))} required>
                 <option value="">Select customer</option>
-                {customerCatalog.map((customer) => (
+                {asArray(customerCatalog).map((customer) => (
                   <option key={customer.customer_id} value={customer.customer_id}>
                     {customer.name}
                   </option>
@@ -695,13 +791,13 @@ export default function MasterDataPage() {
             </div>
             <div>
               <div className="mb-2 flex items-center justify-between">
-                <label className={labelClass}>Default operations route</label>
+                <label className={labelClass}>Default operations route *</label>
                 <button type="button" onClick={addPartStep} className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600">
                   Add step
                 </button>
               </div>
               <div className="space-y-3">
-                {partForm.steps.map((step, index) => (
+                {(asArray(partForm.steps)?.map((step, index) => (
                   <div key={`step-${index}`} className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">{index + 1}</div>
                     <input className={inputClass} value={step} onChange={(event) => updatePartStep(index, event.target.value)} placeholder="Machining" required />
@@ -709,14 +805,26 @@ export default function MasterDataPage() {
                       Remove
                     </button>
                   </div>
-                ))}
+                ))) || []}
               </div>
             </div>
+            <div>
+              <label className={labelClass}>Material Cost / Unit (₹)</label>
+              <input
+                className={inputClass}
+                type="number"
+                min="0"
+                step="0.01"
+                value={partForm.default_material_cost_per_unit}
+                onChange={(event) => setPartForm((current) => ({ ...current, default_material_cost_per_unit: event.target.value }))}
+                placeholder="e.g. 85.00"
+              />
+            </div>
             <div className="flex gap-3">
-              <button type="submit" className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white">
+              <button type="submit" disabled={!canSubmitPart} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                 {savingKey === 'part' ? 'Saving...' : editingPartId ? 'Update part' : 'Create part'}
               </button>
-              <button type="button" onClick={() => { setPartForm(emptyPartForm(customerCatalog[0]?.customer_id || '')); setEditingPartId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
+              <button type="button" onClick={() => { setPartForm(emptyPartForm(asArray(customerCatalog)[0]?.customer_id || '')); setEditingPartId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
                 Reset
               </button>
             </div>
@@ -743,7 +851,7 @@ export default function MasterDataPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {shifts.map((shift) => (
+                {asArray(shifts).map((shift) => (
                   <tr key={shift.shift_id}>
                     <td className="py-3 pr-4 font-medium text-slate-800">{shift.name}</td>
                     <td className="py-3 pr-4 text-slate-600">{shift.start_time}</td>
@@ -753,19 +861,31 @@ export default function MasterDataPage() {
                         <button type="button" onClick={() => selectShift(shift)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400">
                           Edit
                         </button>
-                        <button type="button" onClick={() => handleShiftDelete(shift)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
-                          Delete
-                        </button>
+                        {canDeleteMasterData ? (
+                          <button type="button" onClick={() => handleShiftDelete(shift)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
+                            Delete
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {!loading.shifts && asArray(shifts).length === 0 ? (
+              <div className="pt-6">
+                <EmptyStatePanel
+                  title="No shifts available yet"
+                  detail="Create a shift so the planning board can place operations into real working windows."
+                  ctaLabel="Add first shift"
+                  onCta={() => document.getElementById('shift-form-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                />
+              </div>
+            ) : null}
           </div>
         </section>
 
-        <section className={panelClass}>
+        <section className={panelClass} id="shift-form-card">
           <SectionHeader
             eyebrow={editingShiftId ? 'Edit shift' : 'New shift'}
             title={editingShiftId ? 'Adjust timing window' : 'Add a shift'}
@@ -773,21 +893,21 @@ export default function MasterDataPage() {
           />
           <form className="space-y-4" onSubmit={handleShiftSubmit}>
             <div>
-              <label className={labelClass}>Shift name</label>
+              <label className={labelClass}>Shift name *</label>
               <input className={inputClass} value={shiftForm.name} onChange={(event) => setShiftForm((current) => ({ ...current, name: event.target.value }))} placeholder="Morning shift" required />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className={labelClass}>Start time</label>
+                <label className={labelClass}>Start time *</label>
                 <input type="time" className={inputClass} value={shiftForm.start_time} onChange={(event) => setShiftForm((current) => ({ ...current, start_time: event.target.value }))} required />
               </div>
               <div>
-                <label className={labelClass}>End time</label>
+                <label className={labelClass}>End time *</label>
                 <input type="time" className={inputClass} value={shiftForm.end_time} onChange={(event) => setShiftForm((current) => ({ ...current, end_time: event.target.value }))} required />
               </div>
             </div>
             <div className="flex gap-3">
-              <button type="submit" className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white">
+              <button type="submit" disabled={!canSubmitShift} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                 {savingKey === 'shift' ? 'Saving...' : editingShiftId ? 'Update shift' : 'Create shift'}
               </button>
               <button type="button" onClick={() => { setShiftForm(emptyShiftForm()); setEditingShiftId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -807,7 +927,7 @@ export default function MasterDataPage() {
             detail="Keep operator, supervisor, and specialist profiles current so execution and notifications map cleanly."
           />
           <div className="grid gap-3">
-            {workers.map((worker) => (
+            {asArray(workers).map((worker) => (
               <article key={worker.worker_id} className="flex flex-col gap-3 rounded-[24px] border border-slate-100 bg-slate-50/80 p-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">{worker.name}</h3>
@@ -818,16 +938,26 @@ export default function MasterDataPage() {
                   <button type="button" onClick={() => selectWorker(worker)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400">
                     Edit
                   </button>
-                  <button type="button" onClick={() => handleWorkerDelete(worker)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
-                    Delete
-                  </button>
+                  {canDeleteMasterData ? (
+                    <button type="button" onClick={() => handleWorkerDelete(worker)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
+                      Delete
+                    </button>
+                  ) : null}
                 </div>
               </article>
             ))}
+            {!loading.workers && asArray(workers).length === 0 ? (
+              <EmptyStatePanel
+                title="No workers on the roster yet"
+                detail="Add your first operator or supervisor so execution records and notifications can stay tied to real people."
+                ctaLabel="Add first worker"
+                onCta={() => document.getElementById('worker-form-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              />
+            ) : null}
           </div>
         </section>
 
-        <section className={panelClass}>
+        <section className={panelClass} id="worker-form-card">
           <SectionHeader
             eyebrow={editingWorkerId ? 'Edit worker' : 'New worker'}
             title={editingWorkerId ? 'Update roster entry' : 'Add a worker'}
@@ -835,16 +965,28 @@ export default function MasterDataPage() {
           />
           <form className="space-y-4" onSubmit={handleWorkerSubmit}>
             <div>
-              <label className={labelClass}>Worker name</label>
+              <label className={labelClass}>Worker name *</label>
               <input className={inputClass} value={workerForm.name} onChange={(event) => setWorkerForm((current) => ({ ...current, name: event.target.value }))} placeholder="Ravi Sharma" required />
             </div>
             <div>
-              <label className={labelClass}>Role</label>
+              <label className={labelClass}>Role *</label>
               <input className={inputClass} value={workerForm.role} onChange={(event) => setWorkerForm((current) => ({ ...current, role: event.target.value }))} placeholder="Operator" required />
+            </div>
+            <div>
+              <label className={labelClass}>Hourly Rate (₹)</label>
+              <input
+                className={inputClass}
+                type="number"
+                min="0"
+                step="0.01"
+                value={workerForm.hourly_rate}
+                onChange={(event) => setWorkerForm((current) => ({ ...current, hourly_rate: event.target.value }))}
+                placeholder="e.g. 120.00"
+              />
             </div>
             <InlineToggle checked={workerForm.is_active} onChange={(event) => setWorkerForm((current) => ({ ...current, is_active: event.target.checked }))} label="Worker is active" />
             <div className="flex gap-3">
-              <button type="submit" className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white">
+              <button type="submit" disabled={!canSubmitWorker} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                 {savingKey === 'worker' ? 'Saving...' : editingWorkerId ? 'Update worker' : 'Create worker'}
               </button>
               <button type="button" onClick={() => { setWorkerForm(emptyWorkerForm()); setEditingWorkerId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -879,8 +1021,20 @@ export default function MasterDataPage() {
         </div>
       </section>
 
+      {!canDeleteMasterData ? (
+        <section className="rounded-[24px] border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+          Master Data is currently in view-only mode for the {normalizedRole || 'current'} role. Destructive actions like delete stay hidden.
+        </section>
+      ) : null}
+
+      {isAnyFactoryDataLoading ? (
+        <section className="rounded-[24px] border border-white/70 bg-white/85 p-4 text-sm text-slate-600 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+          Loading factory data...
+        </section>
+      ) : null}
+
       <section className="grid gap-3 lg:grid-cols-5">
-        {sectionCards.map((section) => (
+        {(asArray(sectionCards)?.map((section) => (
           <SectionButton
             key={section.key}
             section={section}
@@ -888,7 +1042,7 @@ export default function MasterDataPage() {
             count={counts[section.key]}
             onSelect={(key) => startTransition(() => setActiveSection(key))}
           />
-        ))}
+        ))) || []}
       </section>
 
       {sectionContent[activeSection]}

@@ -22,17 +22,12 @@ class CloudFrontStack(Stack):
         scope: Construct,
         construct_id: str,
         *,
-        bucket_name: str,
+        bucket: s3.Bucket,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # Import existing S3 bucket by name
-        app_files_bucket = s3.Bucket.from_bucket_name(
-            self,
-            "AppFilesBucket",
-            bucket_name,
-        )
+        app_files_bucket = bucket
 
         # Create Origin Access Control (OAC)
         oac = cloudfront.CfnOriginAccessControl(
@@ -50,14 +45,40 @@ class CloudFrontStack(Stack):
         # Create CloudFront Distribution (NO OAI)
         distribution = cloudfront.Distribution(
             self,
-            "AppFilesDistribution",
+            "RoodhaProdDistributionV1",
             default_behavior=cloudfront.BehaviorOptions(
                 origin=origins.S3BucketOrigin(app_files_bucket),
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
             ),
-            comment="CloudFront distribution for JobWork Planner app files",
+            error_responses=[
+                cloudfront.ErrorResponse(
+                    http_status=403,
+                    response_http_status=200,
+                    response_page_path="/index.html"
+                ),
+                cloudfront.ErrorResponse(
+                    http_status=404,
+                    response_http_status=200,
+                    response_page_path="/index.html"
+                )
+            ],
+            comment="Project Roodha Production - Deployed April 2026",
+        )
+
+        import aws_cdk.aws_iam as iam
+        app_files_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[app_files_bucket.arn_for_objects("*")],
+                principals=[iam.ServicePrincipal("cloudfront.amazonaws.com")],
+                conditions={
+                    "StringLike": {
+                        "AWS:SourceArn": f"arn:aws:cloudfront::{Stack.of(self).account}:distribution/*"
+                    }
+                }
+            )
         )
 
         # Attach OAC to the CloudFront origin

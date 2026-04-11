@@ -1,0 +1,467 @@
+{
+ "Resources": {
+  "RoodhaProdBucketV1709E8CD5": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "CorsConfiguration": {
+     "CorsRules": [
+      {
+       "AllowedHeaders": [
+        "*"
+       ],
+       "AllowedMethods": [
+        "GET",
+        "PUT",
+        "HEAD"
+       ],
+       "AllowedOrigins": [
+        "*"
+       ],
+       "MaxAge": 3000
+      }
+     ]
+    },
+    "LifecycleConfiguration": {
+     "Rules": [
+      {
+       "ExpirationInDays": 365,
+       "Id": "transition-to-ia",
+       "Status": "Enabled",
+       "Transitions": [
+        {
+         "StorageClass": "STANDARD_IA",
+         "TransitionInDays": 30
+        }
+       ]
+      }
+     ]
+    },
+    "OwnershipControls": {
+     "Rules": [
+      {
+       "ObjectOwnership": "BucketOwnerEnforced"
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": false,
+     "BlockPublicPolicy": false,
+     "IgnorePublicAcls": false,
+     "RestrictPublicBuckets": false
+    },
+    "VersioningConfiguration": {
+     "Status": "Enabled"
+    },
+    "WebsiteConfiguration": {
+     "ErrorDocument": "index.html",
+     "IndexDocument": "index.html"
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "RoodhaProdBucketStackV1/RoodhaProdBucketV1/Resource"
+   }
+  },
+  "RoodhaProdBucketV1Policy129C098F": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "RoodhaProdBucketV1709E8CD5"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:GetObject",
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "RoodhaProdBucketV1709E8CD5",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       },
+       "Sid": "PublicReadGetObject"
+      },
+      {
+       "Action": "s3:GetObject",
+       "Condition": {
+        "StringLike": {
+         "AWS:SourceArn": "arn:aws:cloudfront::676867499736:distribution/*"
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "cloudfront.amazonaws.com"
+       },
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "RoodhaProdBucketV1709E8CD5",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RoodhaProdBucketStackV1/RoodhaProdBucketV1/Policy/Resource"
+   }
+  },
+  "AppLambdaRoleEC2AB6BB": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "Lambda role to access JobWork Planner S3 bucket"
+   },
+   "Metadata": {
+    "aws:cdk:path": "RoodhaProdBucketStackV1/AppLambdaRole/Resource"
+   }
+  },
+  "AppLambdaRoleDefaultPolicy876E6502": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:ListBucket",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "RoodhaProdBucketV1709E8CD5",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "RoodhaProdBucketV1709E8CD5",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "RoodhaProdBucketV1709E8CD5",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "RoodhaProdBucketV1709E8CD5",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "AppLambdaRoleDefaultPolicy876E6502",
+    "Roles": [
+     {
+      "Ref": "AppLambdaRoleEC2AB6BB"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RoodhaProdBucketStackV1/AppLambdaRole/DefaultPolicy/Resource"
+   }
+  },
+  "AppEc2RoleA5C560A3": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ec2.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "EC2 role to access JobWork Planner S3 bucket"
+   },
+   "Metadata": {
+    "aws:cdk:path": "RoodhaProdBucketStackV1/AppEc2Role/Resource"
+   }
+  },
+  "AppEc2RoleDefaultPolicyEAC98706": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:ListBucket",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "RoodhaProdBucketV1709E8CD5",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "RoodhaProdBucketV1709E8CD5",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "RoodhaProdBucketV1709E8CD5",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "RoodhaProdBucketV1709E8CD5",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "AppEc2RoleDefaultPolicyEAC98706",
+    "Roles": [
+     {
+      "Ref": "AppEc2RoleA5C560A3"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RoodhaProdBucketStackV1/AppEc2Role/DefaultPolicy/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/0WKWw7CIBBF19J/GPvQDegCbHABBhHjCAVThjQNYe9NS5N+nfs4LbTNBepKToGrt+EWX5AeJJVhcgrPFDpI16iMJnb7uD0V9N6imo+59MxQDpCEt3q9Nh7m7mQmdPBxVJtzj/SPlFk/09e7UwfNGerqFxD5GB3hoEEULmccbwauAAAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "RoodhaProdBucketStackV1/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "BucketName": {
+   "Description": "S3 bucket name for app files",
+   "Value": {
+    "Ref": "RoodhaProdBucketV1709E8CD5"
+   }
+  },
+  "WebsiteUrl": {
+   "Description": "Public S3 static website URL for the frontend",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "http://",
+      {
+       "Ref": "RoodhaProdBucketV1709E8CD5"
+      },
+      ".s3-website.ap-south-1.amazonaws.com"
+     ]
+    ]
+   }
+  },
+  "WebsiteDomainName": {
+   "Description": "Public S3 static website domain name for the frontend",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      {
+       "Ref": "RoodhaProdBucketV1709E8CD5"
+      },
+      ".s3-website.ap-south-1.amazonaws.com"
+     ]
+    ]
+   }
+  },
+  "AppLambdaRoleArn": {
+   "Description": "IAM role ARN for Lambda access",
+   "Value": {
+    "Fn::GetAtt": [
+     "AppLambdaRoleEC2AB6BB",
+     "Arn"
+    ]
+   }
+  },
+  "AppEc2RoleArn": {
+   "Description": "IAM role ARN for EC2 access",
+   "Value": {
+    "Fn::GetAtt": [
+     "AppEc2RoleA5C560A3",
+     "Arn"
+    ]
+   }
+  },
+  "ExportsOutputFnGetAttRoodhaProdBucketV1709E8CD5RegionalDomainName6669C27B": {
+   "Value": {
+    "Fn::GetAtt": [
+     "RoodhaProdBucketV1709E8CD5",
+     "RegionalDomainName"
+    ]
+   },
+   "Export": {
+    "Name": "RoodhaProdBucketStackV1:ExportsOutputFnGetAttRoodhaProdBucketV1709E8CD5RegionalDomainName6669C27B"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

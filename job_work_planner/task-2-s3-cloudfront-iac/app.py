@@ -14,21 +14,21 @@ env = cdk.Environment(
 )
 
 # ---------------------------------------------------------
-# Stack 1: Private S3 bucket for app files
+# Stack 1: Public S3 website bucket for the production frontend
 # ---------------------------------------------------------
 s3_stack = S3BucketStack(
     app,
-    "S3BucketStack",
+    "RoodhaProdBucketStackV1",
     env=env,
 )
 
 # ---------------------------------------------------------
-# Stack 2: CloudFront distribution in front of S3
+# Stack 2: Optional CloudFront distribution in front of the frontend bucket
 # ---------------------------------------------------------
 CloudFrontStack(
     app,
-    "CloudFrontStack",
-    bucket_name=s3_stack.bucket.bucket_name,
+    "RoodhaFrontendProdStackV1",
+    bucket=s3_stack.bucket,
     env=env,
 )
 
