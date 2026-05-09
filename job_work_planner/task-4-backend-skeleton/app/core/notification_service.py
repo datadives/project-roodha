@@ -1,96 +1,206 @@
+"""
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: notification_service.py
+ * 
+ * 1) Purpose: Core framework configurations, middlewares, and utilities.
+ * 2) Roadmap Connection: This file is a critical component of the Stage 2 (v1.5) Industrial 
+ *    Hardening phase. It enforces multi-tenancy, security (RBAC), and transactional 
+ *    resilience as defined in the formal Roadmap.
+ */
+"""
 # app/core/notification_service.py
+"""
+Async notification service for Project Roodha.
+All functions use AsyncSession (via get_async_db) to avoid connection pool
+exhaustion in the async FastAPI application.
+"""
 
 import logging
+import os
 import uuid
-from datetime import datetime
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
+import boto3
+from datetime import datetime, timezone
+
+from sqlalchemy import or_, select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models
 
 logger = logging.getLogger("jobwork-backend")
 
-def create_notification(
-    db: Session,          # 👈 NEW: Database session
-    tenant_id: str, 
-    user_id: str | None,  # If None, broadcasts to all in tenant
-    notif_type: str,      # 'READY', 'CONFLICT', 'DELAY'
-    message: str, 
-    entity_ref: str
-):
+
+async def create_notification(
+    db: AsyncSession,
+    tenant_id: str,
+    user_id: str | None,   # None → broadcast to all tenant users
+    notif_type: str,       # e.g. 'READY', 'CONFLICT', 'DELAY'
+    message: str,
+    entity_ref: str | None = None,
+) -> models.Notification:
     """
-    Creates an in-app notification record directly in AWS RDS.
+    Persists an in-app notification record to the database.
+
+    Args:
+        db:          Active async database session.
+        tenant_id:   Owning tenant.
+        user_id:     Target user, or None for a tenant-wide broadcast.
+        notif_type:  Notification category string.
+        message:     Human-readable notification body.
+        entity_ref:  Optional reference token (e.g. 'JOB-042', 'OP-ABC').
+
+    Returns:
+        The persisted Notification ORM instance.
     """
     notification = models.Notification(
-        notification_id=f"NOT-{str(uuid.uuid4())[:8]}",
+        notification_id=uuid.uuid4(),
         tenant_id=tenant_id,
-        user_id=user_id, 
+        user_id=user_id,
         type=notif_type,
         message=message,
+        entity_reference=entity_ref,
         is_read=False,
-        created_at=datetime.utcnow().isoformat()
-        
-        # ⚠️ NOTE: 'entity_reference' was in your mock DB, but isn't in models.py yet.
-        # Add it to models.py as a Column(String) and you can uncomment the line below!
-        # entity_reference=entity_ref 
+        read_at=None,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
-    
+
     db.add(notification)
-    db.commit()
-    db.refresh(notification)
-    
-    logger.info(f"NOTIFICATION_CREATED | Type: {notif_type} | Ref: {entity_ref}")
+    await db.commit()
+    await db.refresh(notification)
+
+    logger.info(
+        "NOTIFICATION_CREATED | tenant=%s | user=%s | type=%s | ref=%s",
+        tenant_id, user_id, notif_type, entity_ref,
+    )
     return notification
 
 
-def get_user_notifications(db: Session, tenant_id: str, user_id: str, unread_only: bool = False):
+async def get_user_notifications(
+    db: AsyncSession,
+    tenant_id: str,
+    user_id: str,
+    unread_only: bool = False,
+) -> list[models.Notification]:
     """
-    Fetches notifications for a user (and tenant-wide broadcasts) from AWS RDS.
+    Returns notifications for a user, including tenant-wide broadcasts
+    (where user_id IS NULL), sorted newest-first.
     """
-    # Base query: Matches the tenant AND (Matches the user OR is a broadcast where user_id is NULL)
-    query = db.query(models.Notification).filter(
-        models.Notification.tenant_id == tenant_id,
-        or_(models.Notification.user_id == user_id, models.Notification.user_id.is_(None))
-    )
-    
-    # Optional filter
-    if unread_only:
-        query = query.filter(models.Notification.is_read == False)
-        
-    # Sort newest first and execute
-    return query.order_by(models.Notification.created_at.desc()).all()
-
-
-def get_unread_notification_count(db: Session, tenant_id: str, user_id: str) -> int:
-    return (
-        db.query(models.Notification)
-        .filter(
+    stmt = (
+        select(models.Notification)
+        .where(
             models.Notification.tenant_id == tenant_id,
-            or_(models.Notification.user_id == user_id, models.Notification.user_id.is_(None)),
-            models.Notification.is_read == False,
+            or_(
+                models.Notification.user_id == user_id,
+                models.Notification.user_id.is_(None),
+            ),
         )
-        .count()
     )
 
+    if unread_only:
+        stmt = stmt.where(models.Notification.is_read == False)  # noqa: E712
 
-def mark_notification_read(db: Session, notification_id: str, tenant_id: str, user_id: str):
+    stmt = stmt.order_by(models.Notification.created_at.desc())
+
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_unread_notification_count(
+    db: AsyncSession,
+    tenant_id: str,
+    user_id: str,
+) -> int:
+    """Returns the count of unread notifications for a user (incl. broadcasts)."""
+    stmt = (
+        select(func.count())
+        .select_from(models.Notification)
+        .where(
+            models.Notification.tenant_id == tenant_id,
+            or_(
+                models.Notification.user_id == user_id,
+                models.Notification.user_id.is_(None),
+            ),
+            models.Notification.is_read == False,  # noqa: E712
+        )
+    )
+
+    result = await db.execute(stmt)
+    return result.scalar() or 0
+
+
+async def mark_notification_read(
+    db: AsyncSession,
+    notification_id: str,
+    tenant_id: str,
+    user_id: str,
+) -> models.Notification:
     """
-    Marks a specific notification as read in AWS RDS.
+    Marks a notification as read and stamps the read_at timestamp.
+
+    Raises:
+        ValueError: If the notification is not found or does not belong
+                    to the requesting user / tenant.
     """
-    notif = db.query(models.Notification).filter(
+    stmt = select(models.Notification).where(
         models.Notification.notification_id == notification_id,
         models.Notification.tenant_id == tenant_id,
-        or_(models.Notification.user_id == user_id, models.Notification.user_id.is_(None)),
-    ).first()
-    
+        or_(
+            models.Notification.user_id == user_id,
+            models.Notification.user_id.is_(None),
+        ),
+    )
+
+    result = await db.execute(stmt)
+    notif = result.scalars().first()
+
     if not notif:
         raise ValueError("Notification not found or unauthorized access")
-        
+
     notif.is_read = True
-    
-    # ⚠️ NOTE: 'read_at' is another field that isn't in models.py yet!
-    # notif.read_at = datetime.utcnow().isoformat() 
-    
-    db.commit()
-    db.refresh(notif)
+    notif.read_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    await db.commit()
+    await db.refresh(notif)
     return notif
+
+
+async def send_email(
+    to_email: str,
+    subject: str,
+    body_text: str,
+    body_html: str | None = None,
+) -> bool:
+    """
+    Sends an email using AWS SES.
+    Sender email is retrieved from the SES_SENDER_EMAIL environment variable.
+    """
+    sender = os.getenv("SES_SENDER_EMAIL")
+    if not sender:
+        logger.error("SES_SENDER_EMAIL environment variable not set. Cannot send email.")
+        return False
+
+    region = os.getenv("AWS_REGION", "ap-south-1")
+    
+    try:
+        client = boto3.client('ses', region_name=region)
+        
+        message = {
+            'Subject': {'Data': subject},
+            'Body': {'Text': {'Data': body_text}}
+        }
+        
+        if body_html:
+            message['Body']['Html'] = {'Data': body_html}
+
+        response = client.send_email(
+            Source=sender,
+            Destination={'ToAddresses': [to_email]},
+            Message=message
+        )
+        
+        logger.info("EMAIL_SENT | to=%s | msg_id=%s", to_email, response['MessageId'])
+        return True
+        
+    except Exception as e:
+        logger.error("EMAIL_FAILED | to=%s | error=%s", to_email, str(e))
+        return False

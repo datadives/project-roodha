@@ -1,18 +1,49 @@
-const ALL_ACCESS_ROLES = ['OWNER', 'ADMIN']
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: roles.js
+ * 
+ * 1) Purpose: Utility library or API client for roles.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
+const ALL_ACCESS_ROLES = ['OWNER']
 
 const permissionMatrix = {
-  OWNER: ['dashboard', 'jobs', 'masterData', 'analytics', 'notifications', 'plan', 'overridePlan', 'execute'],
-  ADMIN: ['dashboard', 'jobs', 'masterData', 'analytics', 'notifications', 'plan', 'overridePlan', 'execute'],
-  SUPERVISOR: ['dashboard', 'jobs', 'masterData', 'analytics', 'notifications', 'plan', 'overridePlan', 'execute'],
-  PLANNER: ['dashboard', 'analytics', 'notifications', 'plan'],
-  OPERATOR: ['dashboard', 'notifications', 'execute'],
+  OWNER: [
+    'dashboard',
+    'jobs',
+    'masterData',
+    'masterDataWrite',
+    'analytics',
+    'machineLoad',
+    'autoSchedule',
+    'exports',
+    'settings',
+    'userManagement',
+    'financialConfig',
+    'notifications',
+    'plan',
+    'overridePlan',
+    'execute',
+  ],
+  SUPERVISOR: [
+    'dashboard',
+    'jobs',
+    'masterData',
+    'machineLoad',
+    'autoSchedule',
+    'notifications',
+    'plan',
+    'execute',
+  ],
+  OPERATOR: ['operatorDashboard', 'notifications', 'execute'],
 }
 
 const roleLabels = {
   OWNER: 'Owner',
-  ADMIN: 'Admin',
   SUPERVISOR: 'Supervisor',
-  PLANNER: 'Planner',
   OPERATOR: 'Operator',
 }
 
@@ -48,7 +79,7 @@ export function hasPermission(role, permission) {
 }
 
 export function getDefaultRouteForRole(role) {
-  return hasPermission(role, 'dashboard') ? '/' : '/notifications'
+  return hasPermission(role, 'operatorDashboard') ? '/operator' : '/dashboard'
 }
 
 export function listAllowedRoleLabels(roles = []) {

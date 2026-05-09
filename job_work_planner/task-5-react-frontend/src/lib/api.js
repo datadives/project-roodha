@@ -1,11 +1,21 @@
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: api.js
+ * 
+ * 1) Purpose: Utility library or API client for api.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
 import axios from 'axios'
 import { toast } from 'react-hot-toast'
-import { getAuthContext, getCachedAuthContextSync } from './auth'
+import { fetchAuthSession } from 'aws-amplify/auth'
+import { getLatestAuthContextForRequest } from './auth'
+import { CONFIG } from '../config'
 
-const resolvedBaseUrl =
-  import.meta.env.VITE_API_BASE_URL ||
-  (import.meta.env.MODE === 'development' ? '/api' : '')
-const resolvedTimeout = Number(import.meta.env.VITE_API_TIMEOUT_MS || 30000)
+const resolvedBaseUrl = CONFIG.BASE_URL
+const resolvedTimeout = CONFIG.API_TIMEOUT_MS
 
 const api = axios.create({
   baseURL: resolvedBaseUrl.replace(/\/+$/, ''),
@@ -16,10 +26,34 @@ let lastErrorToastMessage = ''
 let lastErrorToastAt = 0
 
 function withTrailingSlash(url) {
-  if (!url || typeof url !== 'string') return url
-  if (/^https?:\/\//i.test(url)) return url
-  if (url === '/') return url
-  return url.endsWith('/') ? url : `${url}/`
+  return url 
+}
+
+function isUsableToken(token) {
+  return (
+    typeof token === 'string' &&
+    token.trim() &&
+    !['undefined', 'null'].includes(token.trim().toLowerCase())
+  )
+}
+
+async function getRequestAuthContext() {
+  const auth = await getLatestAuthContextForRequest().catch(() => null)
+
+  try {
+    const session = await fetchAuthSession()
+    const idToken = session.tokens?.idToken?.toString()
+    if (isUsableToken(idToken)) {
+      return {
+        ...auth,
+        token: idToken.trim(),
+      }
+    }
+  } catch {
+    // Fall back to the recovered auth context below.
+  }
+
+  return auth
 }
 
 function showErrorToast(message) {
@@ -34,10 +68,15 @@ function showErrorToast(message) {
 
 api.interceptors.request.use(async (config) => {
   config.url = withTrailingSlash(config.url)
-  const syncAuth = getCachedAuthContextSync()
-  const auth = syncAuth || (await getAuthContext().catch(() => null))
-  if (auth?.token) {
-    config.headers.Authorization = `Bearer ${auth.token}`
+  const auth = await getRequestAuthContext()
+  const token = typeof auth?.token === 'string' ? auth.token.trim() : ''
+  
+  if (isUsableToken(token)) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  const tenantId = auth?.tenantId || auth?.tenant_id
+  if (tenantId) {
+    config.headers['X-Tenant-ID'] = tenantId
   }
   return config
 })
@@ -85,7 +124,11 @@ api.interceptors.response.use(
     }
     return response
   },
-  (error) => {
+  async (error) => {
+    if (error?.response?.status === 401) {
+      showErrorToast('This request is not authorized for the current session.')
+      return Promise.reject(error)
+    }
     showErrorToast(describeRequestError(error))
     return Promise.reject(error)
   },

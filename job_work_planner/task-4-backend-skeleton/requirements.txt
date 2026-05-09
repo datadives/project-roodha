@@ -10,3 +10,9 @@ alembic
 sqlalchemy
 psycopg2-binary
 fpdf2
+boto3
+asyncpg
+email-validator
+pytest
+pytest-asyncio
+httpx

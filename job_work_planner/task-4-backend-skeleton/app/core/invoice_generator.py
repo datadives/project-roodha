@@ -1,3 +1,16 @@
+from __future__ import annotations
+
+"""
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: invoice_generator.py
+ * 
+ * 1) Purpose: Core framework configurations, middlewares, and utilities.
+ * 2) Roadmap Connection: This file is a critical component of the Stage 2 (v1.5) Industrial 
+ *    Hardening phase. It enforces multi-tenancy, security (RBAC), and transactional 
+ *    resilience as defined in the formal Roadmap.
+ */
+"""
 """
 invoice_generator.py
 --------------------
@@ -13,8 +26,6 @@ Uses fpdf2 (FPDF2) to produce a clean A4 invoice with:
 Encoding stability: Helvetica only (built-in, no external font files required).
 Currency notation: "Rs." (ASCII-safe, avoids UTF-8 rupee symbol encoding issues in fpdf2).
 """
-
-from __future__ import annotations
 
 import io
 from datetime import datetime

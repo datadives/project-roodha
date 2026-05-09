@@ -1,3 +1,13 @@
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: AnalyticsPage.jsx
+ * 
+ * 1) Purpose: Top-level page component for AnalyticsPage.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
 import { useEffect, useMemo, useState } from 'react'
 import {
   fetchBottleneckMetrics,
@@ -5,6 +15,7 @@ import {
   fetchLateJobsMetrics,
   fetchWipMetrics,
 } from '../lib/metricsApi'
+import { authenticatedFetch } from '../lib/authenticatedFetch'
 
 const EMPTY_COSTING_OVERVIEW = {
   total_jobs: 0,
@@ -94,10 +105,11 @@ function prettyLabel(value) {
 
 function MetricCard({ label, value, hint, accent }) {
   return (
-    <article className="rounded-[28px] border border-white/70 bg-white/88 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
-      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">{label}</p>
-      <div className={`mt-3 text-3xl font-semibold ${accent}`}>{value}</div>
-      <p className="mt-2 text-sm text-slate-500">{hint}</p>
+    <article className="rounded-[28px] border border-slate-800 bg-slate-900/60 p-6 shadow-xl backdrop-blur-sm relative overflow-hidden">
+      <div className="absolute top-0 left-0 w-1 h-full bg-slate-700" />
+      <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">{label}</p>
+      <div className={`mt-3 text-3xl font-black font-mono tracking-tighter ${accent}`}>{value}</div>
+      <p className="mt-4 text-[10px] font-bold uppercase tracking-wider text-slate-500 leading-tight">{hint}</p>
     </article>
   )
 }
@@ -117,14 +129,14 @@ function BarList({ items, emptyMessage, valueKey = 'count', labelKey = 'stage' }
         const width = Math.max((value / maxValue) * 100, value > 0 ? 10 : 0)
 
         return (
-          <div key={`${item?.[labelKey] || 'item'}-${value}`} className="space-y-2">
-            <div className="flex items-center justify-between gap-3 text-sm text-slate-600">
-              <span className="font-semibold text-slate-800">{prettyLabel(item?.[labelKey])}</span>
-              <span>{value}</span>
+          <div key={`${item?.[labelKey] || 'item'}-${value}`} className="space-y-3">
+            <div className="flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+              <span className="truncate">{prettyLabel(item?.[labelKey])}</span>
+              <span className="font-mono text-white text-xs">{value}</span>
             </div>
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+            <div className="h-4 overflow-hidden rounded-sm bg-slate-950 border border-slate-800 p-0.5">
               <div
-                className="h-full rounded-full bg-[linear-gradient(90deg,rgba(14,165,233,0.88),rgba(251,191,36,0.92))]"
+                className="h-full rounded-sm bg-gradient-to-r from-orange-600 to-orange-400 shadow-[0_0_10px_rgba(249,115,22,0.3)] transition-all duration-1000"
                 style={{ width: `${width}%` }}
               />
             </div>
@@ -137,6 +149,7 @@ function BarList({ items, emptyMessage, valueKey = 'count', labelKey = 'stage' }
 
 export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState('')
   const [error, setError] = useState('')
   const [analytics, setAnalytics] = useState({
     wip_by_stage: [],
@@ -189,6 +202,37 @@ export default function AnalyticsPage() {
   )
   const topBottleneck = bottlenecks[0]
 
+  function triggerReportDownload(downloadUrl, filename) {
+    const anchor = document.createElement('a')
+    anchor.href = downloadUrl
+    anchor.download = filename
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  }
+
+  /**
+   * Section 7.4 Excel/CSV Data Export.
+   * Requests the report URL from the backend so local data URLs can later be
+   * replaced by S3 pre-signed URLs without changing the UI contract.
+   */
+  async function handleExportReport(endpoint, filename, exportKey) {
+    setExporting(exportKey)
+    try {
+      const response = await authenticatedFetch(endpoint, { method: 'POST' })
+      const downloadUrl = response?.downloadUrl || response?.download_url
+      if (!downloadUrl) {
+        throw new Error('Export response did not include a download URL.')
+      }
+      triggerReportDownload(downloadUrl, response?.filename || filename)
+    } catch {
+      setError('Unable to export the requested report right now.')
+    } finally {
+      setExporting('')
+    }
+  }
+
   if (loading) {
     return (
       <div className="rounded-[28px] border border-white/70 bg-white/80 p-8 text-sm text-slate-600 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
@@ -200,25 +244,41 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-6">
       {error ? (
-        <div className="rounded-[24px] border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+        <div className="rounded-[24px] border border-orange-500/30 bg-slate-900 p-5 text-sm text-orange-300 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
           {error}
         </div>
       ) : null}
 
-      <section className="relative overflow-hidden rounded-[32px] border border-white/80 bg-[radial-gradient(circle_at_top_left,_rgba(34,197,94,0.18),transparent_28%),radial-gradient(circle_at_86%_18%,_rgba(14,165,233,0.2),transparent_24%),linear-gradient(135deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
-        <div className="absolute -left-8 top-8 h-28 w-28 rounded-full bg-emerald-200/40 blur-3xl" />
+      <section className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
+        <div className="absolute -left-8 top-8 h-28 w-28 rounded-full bg-orange-500/10 blur-3xl" />
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Version 1 Analytics</p>
-            <h1 className="mt-3 text-4xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+            <h1 className="mt-3 text-4xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
               Factory performance cockpit
             </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
               Review WIP pressure, machine bottlenecks, overdue work, and the current estimated value of the shopfloor without leaving the planner.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <div className="rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700">
+            <button
+              type="button"
+              onClick={() => handleExportReport('exports/jobs', 'datadives_jobs_report.csv', 'jobs')}
+              disabled={Boolean(exporting)}
+              className="rounded-full bg-orange-500 px-4 py-2 text-sm font-black uppercase tracking-wider text-slate-950 shadow-lg transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exporting === 'jobs' ? 'Exporting...' : 'Export All Jobs (CSV)'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExportReport('exports/machine-load', 'datadives_machine_load_report.csv', 'machine-load')}
+              disabled={Boolean(exporting)}
+              className="rounded-full border border-orange-500/40 bg-orange-500/10 px-4 py-2 text-sm font-black uppercase tracking-wider text-orange-300 shadow-lg transition hover:bg-orange-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exporting === 'machine-load' ? 'Exporting...' : 'Export Machine Load (CSV)'}
+            </button>
+            <div className="rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-semibold text-slate-300">
               Total WIP: {wipTotal}
             </div>
             <div className="rounded-full border border-white/70 bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
@@ -233,38 +293,38 @@ export default function AnalyticsPage() {
           label="Active Jobs"
           value={overview.active_jobs}
           hint="Jobs not yet completed in this tenant."
-          accent="text-sky-700"
+          accent="text-orange-400"
         />
         <MetricCard
           label="Late Jobs"
           value={lateJobs.total_late}
           hint="Work orders past due date and still open."
-          accent="text-rose-700"
+          accent="text-orange-400"
         />
         <MetricCard
           label="Open Estimated Cost"
           value={formatCurrency(overview.open_estimated_cost)}
           hint="Current estimated value sitting on the shopfloor."
-          accent="text-emerald-700"
+          accent="text-orange-300"
         />
         <MetricCard
           label="Average Estimated Job Cost"
           value={formatCurrency(overview.average_estimated_job_cost)}
           hint="V1 average based on quantity and routed operations."
-          accent="text-amber-700"
+          accent="text-slate-300"
         />
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-        <article className="rounded-[30px] border border-white/70 bg-white/88 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
+        <article className="rounded-[30px] border border-slate-800 bg-slate-900/60 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">WIP by Stage</p>
-              <h2 className="mt-2 text-3xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+              <h2 className="mt-2 text-3xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
                 Stage load
               </h2>
             </div>
-            <div className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">
+            <div className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-orange-300">
               {wipByStage.length} stages
             </div>
           </div>
@@ -274,15 +334,15 @@ export default function AnalyticsPage() {
           />
         </article>
 
-        <article className="rounded-[30px] border border-white/70 bg-white/88 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
+        <article className="rounded-[30px] border border-slate-800 bg-slate-900/60 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Bottleneck Machines</p>
-              <h2 className="mt-2 text-3xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+              <h2 className="mt-2 text-3xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
                 Capacity pressure
               </h2>
             </div>
-            <div className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+            <div className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-orange-300">
               {topBottleneck ? `${topBottleneck.pending_operations} queued` : 'No queue'}
             </div>
           </div>
@@ -290,11 +350,11 @@ export default function AnalyticsPage() {
           {bottlenecks.length > 0 ? (
             <div className="space-y-3">
               {bottlenecks.map((machine, index) => (
-                <div key={machine.machine_id || `${machine.machine_name || 'machine'}-${index}`} className="rounded-[22px] border border-slate-100 bg-slate-50 p-4">
+                <div key={machine.machine_id || `${machine.machine_name || 'machine'}-${index}`} className="rounded-[22px] border border-slate-800 bg-slate-950 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Rank {index + 1}</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900">{machine.machine_name}</div>
+                      <div className="mt-1 text-lg font-semibold text-white">{machine.machine_name}</div>
                       <div className="mt-1 text-xs text-slate-500">{machine.machine_id}</div>
                     </div>
                     <div className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
@@ -311,15 +371,15 @@ export default function AnalyticsPage() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <article className="rounded-[30px] border border-white/70 bg-white/88 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
+        <article className="rounded-[30px] border border-slate-800 bg-slate-900/60 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Late Jobs</p>
-              <h2 className="mt-2 text-3xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+              <h2 className="mt-2 text-3xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
                 Overdue work orders
               </h2>
             </div>
-            <div className="rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-rose-700">
+            <div className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-orange-300">
               {lateJobs.total_late} overdue
             </div>
           </div>
@@ -337,15 +397,15 @@ export default function AnalyticsPage() {
               <tbody className="divide-y divide-slate-100">
                 {lateJobs.jobs.length > 0 ? (
                   lateJobs.jobs.map((job) => (
-                    <tr key={job.job_id}>
+                    <tr key={job.job_id} className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors">
                       <td className="py-4 pr-4">
-                        <div className="font-semibold text-slate-900">{job.job_number}</div>
-                        <div className="mt-1 text-xs text-slate-500">{job.customer_id}</div>
+                        <div className="font-black text-white uppercase tracking-tight font-mono">{job.job_number}</div>
+                        <div className="mt-1 text-[10px] font-bold text-slate-500 font-mono italic">{job.customer_id}</div>
                       </td>
-                      <td className="py-4 pr-4 text-sm text-slate-600">{formatDate(job.due_date)}</td>
-                      <td className="py-4 pr-4 text-sm text-slate-600">{job.priority}</td>
+                      <td className="py-4 pr-4 text-xs font-mono text-slate-400">{formatDate(job.due_date)}</td>
+                      <td className="py-4 pr-4 text-[10px] font-black tracking-widest text-orange-500/80 uppercase">{job.priority}</td>
                       <td className="py-4">
-                        <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">{prettyLabel(job.status)}</span>
+                        <span className="rounded border border-orange-500/30 bg-orange-500/10 px-2 py-1 text-[10px] font-black text-orange-300 uppercase tracking-widest">{prettyLabel(job.status)}</span>
                       </td>
                     </tr>
                   ))
@@ -396,9 +456,9 @@ export default function AnalyticsPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Top {index + 1}</div>
-                        <div className="mt-1 text-lg font-semibold text-slate-900">{job.job_number}</div>
+                        <div className="mt-1 text-lg font-semibold text-slate-900 font-mono">{job.job_number}</div>
                         <div className="mt-1 text-sm text-slate-500">
-                          {job.customer_name} | {job.operation_count} routed operations | Qty {job.quantity}
+                          {job.customer_name} | <span className="font-mono">{job.operation_count}</span> routed operations | Qty <span className="font-mono">{job.quantity}</span>
                         </div>
                       </div>
                       <div className="text-right">
@@ -416,15 +476,15 @@ export default function AnalyticsPage() {
         </article>
       </div>
 
-      <article className="rounded-[30px] border border-white/70 bg-white/88 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
+      <article className="rounded-[30px] border border-slate-800 bg-slate-900/60 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
         <div className="mb-5 flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Recently Completed</p>
-            <h2 className="mt-2 text-3xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+            <h2 className="mt-2 text-3xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
               Costing preview
             </h2>
           </div>
-          <div className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
+          <div className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-orange-300">
             {costing.recent_completed_jobs.length} jobs
           </div>
         </div>
@@ -445,13 +505,13 @@ export default function AnalyticsPage() {
                 costing.recent_completed_jobs.map((job) => (
                   <tr key={job.job_id}>
                     <td className="py-4 pr-4">
-                      <div className="font-semibold text-slate-900">{job.job_number}</div>
-                      <div className="mt-1 text-xs text-slate-500">{job.job_id}</div>
+                      <div className="font-semibold text-slate-900 font-mono">{job.job_number}</div>
+                      <div className="mt-1 text-xs text-slate-500 font-mono">{job.job_id}</div>
                     </td>
                     <td className="py-4 pr-4 text-sm text-slate-600">{job.customer_name}</td>
-                    <td className="py-4 pr-4 text-sm text-slate-600">{formatDate(job.completion_date || job.due_date)}</td>
-                    <td className="py-4 pr-4 text-sm text-slate-600">{job.operation_count}</td>
-                    <td className="py-4 text-right text-sm font-semibold text-slate-900">{formatCurrency(job.estimated_cost)}</td>
+                    <td className="py-4 pr-4 text-sm text-slate-600 font-mono">{formatDate(job.completion_date || job.due_date)}</td>
+                    <td className="py-4 pr-4 text-sm text-slate-600 font-mono">{job.operation_count}</td>
+                    <td className="py-4 text-right text-sm font-semibold text-slate-900 font-mono">{formatCurrency(job.estimated_cost)}</td>
                   </tr>
                 ))
               ) : (

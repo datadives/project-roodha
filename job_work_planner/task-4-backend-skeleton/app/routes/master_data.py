@@ -1,251 +1,307 @@
+"""
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: master_data.py
+ * 
+ * 1) Purpose: Defines API endpoints for master_data.
+ * 2) Roadmap Connection: This file is a critical component of the Stage 2 (v1.5) Industrial 
+ *    Hardening phase. It enforces multi-tenancy, security (RBAC), and transactional 
+ *    resilience as defined in the formal Roadmap.
+ */
+"""
+"""
+master_data.py
+---------------
+Asynchronous API routes for Master Data management.
+"""
+
+import logging
+from uuid import UUID
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import master_data_service as service
-from app.database import get_db
-from app.routes.response_utils import api_success
+from app.database import get_async_db
+from app.core.auth_middleware import role_required
+from app.core.tenant_context import tenant_id_context
 from app.schemas import (
     CustomerCreate,
     CustomerUpdate,
+    CustomerResponse,
     MachineCreate,
     MachineUpdate,
-    PartCreate,
-    PartUpdate,
+    MachineResponse,
     ShiftCreate,
     ShiftUpdate,
+    ShiftResponse,
     WorkerCreate,
     WorkerUpdate,
+    WorkerResponse,
+    PartCreate,
+    PartUpdate,
+    PartResponse,
+    OperationCreate,
+    OperationUpdate,
+    OperationResponse,
 )
+from app.core.response_models import ApiResponse
 
 router = APIRouter(prefix="/master-data", tags=["Master Data"])
+logger = logging.getLogger("jobwork-backend")
 
 
-def _user_from_request(request: Request) -> dict:
+def _get_context(request: Request):
     user = getattr(request.state, "user", None)
-    if not user or not user.get("tenant_id"):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-    return user
-
-
-def _tenant_id_from_request(request: Request) -> str:
-    return _user_from_request(request)["tenant_id"]
-
-
-def _require_master_data_editor(request: Request) -> str:
-    user = _user_from_request(request)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User context missing")
+    
+    tenant_id = user["tenant_id"]
     role = str(user.get("role") or "").upper()
-    if role not in {"SUPERVISOR", "ADMIN", "OWNER"}:
+    if role not in {"OWNER", "SUPERVISOR"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Only Supervisors, Owners, or Admins can modify master data.",
+            detail="Forbidden: Master Data is restricted to owners and supervisors.",
         )
-    return user["tenant_id"]
+    
+    # Strictly enforce tenant isolation in contextvars
+    tenant_id_context.set(tenant_id)
+    
+    return tenant_id, role
 
 
-def _serialize_customer(customer) -> dict:
-    return {
-        "customer_id": customer.customer_id,
-        "tenant_id": customer.tenant_id,
-        "name": customer.name,
-        "contact": customer.contact_person,
-        "is_active": customer.is_active,
-    }
+def _require_admin(role: str):
+    if role not in {"OWNER"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Master data changes require Owner permissions."
+        )
 
 
-def _serialize_machine(machine, db: Session) -> dict:
-    return {
-        "machine_id": machine.machine_id,
-        "tenant_id": machine.tenant_id,
-        "name": machine.name,
-        "type": machine.type,
-        "is_active": machine.is_active,
-        "has_active_jobs": service.machine_has_active_jobs(db, machine.tenant_id, machine.machine_id),
-    }
+# ---------------------------------------------------------
+# Customers
+# ---------------------------------------------------------
 
+@router.post("/customers", status_code=status.HTTP_201_CREATED, response_model=ApiResponse[CustomerResponse])
+@role_required(["OWNER"])
+async def create_customer(payload: CustomerCreate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    customer = await service.create_customer(db, tenant_id, payload)
+    return ApiResponse(data=CustomerResponse.model_validate(customer), message="Customer established.")
 
-def _serialize_shift(shift) -> dict:
-    return {
-        "shift_id": shift.shift_id,
-        "tenant_id": shift.tenant_id,
-        "name": shift.name,
-        "start_time": shift.start_time,
-        "end_time": shift.end_time,
-    }
+@router.get("/customers", response_model=ApiResponse[List[CustomerResponse]])
+async def list_customers(request: Request, include_inactive: bool = Query(False), db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    customers = await service.list_customers(db, tenant_id, include_inactive=include_inactive)
+    return ApiResponse(data=[CustomerResponse.model_validate(c) for c in customers])
 
+@router.get("/customers/{customer_id}", response_model=ApiResponse[CustomerResponse])
+async def get_customer(customer_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    customer = await service.get_customer(db, tenant_id, customer_id)
+    return ApiResponse(data=CustomerResponse.model_validate(customer))
 
-def _serialize_part(part) -> dict:
-    return {
-        "part_id": part.part_id,
-        "tenant_id": part.tenant_id,
-        "part_number": part.part_number,
-        "customer_id": part.customer_id,
-        "default_operations_route": part.default_operations_route,
-    }
-
-
-def _serialize_worker(worker) -> dict:
-    return {
-        "worker_id": worker.worker_id,
-        "tenant_id": worker.tenant_id,
-        "name": worker.name,
-        "role": worker.role,
-        "is_active": worker.is_active,
-    }
-
-
-@router.post("/customers", status_code=status.HTTP_201_CREATED)
-def create_customer(payload: CustomerCreate, request: Request, db: Session = Depends(get_db)):
-    customer = service.create_customer(db, _require_master_data_editor(request), payload)
-    return api_success(_serialize_customer(customer), message="Customer created")
-
-
-@router.get("/customers")
-def list_customers(
-    request: Request,
-    include_inactive: bool = Query(False, description="Set true for settings/admin screens"),
-    db: Session = Depends(get_db),
-):
-    customers = service.list_customers(db, _tenant_id_from_request(request), include_inactive=include_inactive)
-    return api_success([_serialize_customer(customer) for customer in customers])
-
-
-@router.get("/customers/{customer_id}")
-def get_customer(customer_id: str, request: Request, db: Session = Depends(get_db)):
-    customer = service.get_customer(db, _tenant_id_from_request(request), customer_id)
-    return api_success(_serialize_customer(customer))
-
-
-@router.patch("/customers/{customer_id}")
-def update_customer(customer_id: str, payload: CustomerUpdate, request: Request, db: Session = Depends(get_db)):
-    customer = service.update_customer(db, _require_master_data_editor(request), customer_id, payload)
-    return api_success(_serialize_customer(customer), message="Customer updated")
-
+@router.patch("/customers/{customer_id}", response_model=ApiResponse[CustomerResponse])
+@role_required(["OWNER"])
+async def update_customer(customer_id: UUID, payload: CustomerUpdate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    customer = await service.update_customer(db, tenant_id, customer_id, payload)
+    return ApiResponse(data=CustomerResponse.model_validate(customer))
 
 @router.delete("/customers/{customer_id}")
-def delete_customer(customer_id: str, request: Request, db: Session = Depends(get_db)):
-    result = service.delete_customer(db, _require_master_data_editor(request), customer_id)
-    return api_success(result, message="Customer deleted")
+@role_required(["OWNER"])
+async def delete_customer(customer_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    result = await service.delete_customer(db, tenant_id, customer_id)
+    return ApiResponse(data=result, message="Customer record removed.")
 
 
-@router.post("/machines", status_code=status.HTTP_201_CREATED)
-def create_machine(payload: MachineCreate, request: Request, db: Session = Depends(get_db)):
-    machine = service.create_machine(db, _require_master_data_editor(request), payload)
-    return api_success(_serialize_machine(machine, db), message="Machine created")
+# ---------------------------------------------------------
+# Machines
+# ---------------------------------------------------------
 
+@router.post("/machines", status_code=status.HTTP_201_CREATED, response_model=ApiResponse[MachineResponse])
+@role_required(["OWNER"])
+async def create_machine(payload: MachineCreate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    machine = await service.create_machine(db, tenant_id, payload)
+    return ApiResponse(data=MachineResponse.model_validate(machine), message="Machine successfully provisioned.")
 
-@router.get("/machines")
-def list_machines(request: Request, db: Session = Depends(get_db)):
-    machines = service.list_machines(db, _tenant_id_from_request(request))
-    return api_success([_serialize_machine(machine, db) for machine in machines])
+@router.get("/machines", response_model=ApiResponse[List[MachineResponse]])
+async def list_machines(request: Request, include_inactive: bool = Query(False), db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    machines = await service.list_machines(db, tenant_id, include_inactive=include_inactive)
+    return ApiResponse(data=[MachineResponse.model_validate(m) for m in machines])
 
+@router.get("/machines/{machine_id}", response_model=ApiResponse[MachineResponse])
+async def get_machine(machine_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    machine = await service.get_machine(db, tenant_id, machine_id)
+    return ApiResponse(data=MachineResponse.model_validate(machine))
 
-@router.get("/machines/{machine_id}")
-def get_machine(machine_id: str, request: Request, db: Session = Depends(get_db)):
-    machine = service.get_machine(db, _tenant_id_from_request(request), machine_id)
-    return api_success(_serialize_machine(machine, db))
-
-
-@router.patch("/machines/{machine_id}")
-def update_machine(machine_id: str, payload: MachineUpdate, request: Request, db: Session = Depends(get_db)):
-    machine = service.update_machine(db, _require_master_data_editor(request), machine_id, payload)
-    return api_success(_serialize_machine(machine, db), message="Machine updated")
-
+@router.patch("/machines/{machine_id}", response_model=ApiResponse[MachineResponse])
+@role_required(["OWNER"])
+async def update_machine(machine_id: UUID, payload: MachineUpdate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    machine = await service.update_machine(db, tenant_id, machine_id, payload)
+    return ApiResponse(data=MachineResponse.model_validate(machine))
 
 @router.delete("/machines/{machine_id}")
-def delete_machine(machine_id: str, request: Request, db: Session = Depends(get_db)):
-    result = service.delete_machine(db, _require_master_data_editor(request), machine_id)
-    return api_success(result, message="Machine deleted")
+@role_required(["OWNER"])
+async def delete_machine(machine_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    result = await service.delete_machine(db, tenant_id, machine_id)
+    return ApiResponse(data=result, message="Machine purged.")
 
 
-@router.post("/shifts", status_code=status.HTTP_201_CREATED)
-def create_shift(payload: ShiftCreate, request: Request, db: Session = Depends(get_db)):
-    shift = service.create_shift(db, _require_master_data_editor(request), payload)
-    return api_success(_serialize_shift(shift), message="Shift created")
+# ---------------------------------------------------------
+# Workers
+# ---------------------------------------------------------
 
+@router.post("/workers", status_code=status.HTTP_201_CREATED, response_model=ApiResponse[WorkerResponse])
+@role_required(["OWNER"])
+async def create_worker(payload: WorkerCreate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    worker = await service.create_worker(db, tenant_id, payload)
+    return ApiResponse(data=WorkerResponse.model_validate(worker))
 
-@router.get("/shifts")
-def list_shifts(request: Request, db: Session = Depends(get_db)):
-    shifts = service.list_shifts(db, _tenant_id_from_request(request))
-    return api_success([_serialize_shift(shift) for shift in shifts])
+@router.get("/workers", response_model=ApiResponse[List[WorkerResponse]])
+async def list_workers(request: Request, include_inactive: bool = Query(False), db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    workers = await service.list_workers(db, tenant_id, include_inactive=include_inactive)
+    return ApiResponse(data=[WorkerResponse.model_validate(w) for w in workers])
 
+@router.get("/workers/{worker_id}", response_model=ApiResponse[WorkerResponse])
+async def get_worker(worker_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    worker = await service.get_worker(db, tenant_id, worker_id)
+    return ApiResponse(data=WorkerResponse.model_validate(worker))
 
-@router.get("/shifts/{shift_id}")
-def get_shift(shift_id: str, request: Request, db: Session = Depends(get_db)):
-    shift = service.get_shift(db, _tenant_id_from_request(request), shift_id)
-    return api_success(_serialize_shift(shift))
-
-
-@router.patch("/shifts/{shift_id}")
-def update_shift(shift_id: str, payload: ShiftUpdate, request: Request, db: Session = Depends(get_db)):
-    shift = service.update_shift(db, _require_master_data_editor(request), shift_id, payload)
-    return api_success(_serialize_shift(shift), message="Shift updated")
-
-
-@router.delete("/shifts/{shift_id}")
-def delete_shift(shift_id: str, request: Request, db: Session = Depends(get_db)):
-    result = service.delete_shift(db, _require_master_data_editor(request), shift_id)
-    return api_success(result, message="Shift deleted")
-
-
-@router.post("/workers", status_code=status.HTTP_201_CREATED)
-def create_worker(payload: WorkerCreate, request: Request, db: Session = Depends(get_db)):
-    worker = service.create_worker(db, _require_master_data_editor(request), payload)
-    return api_success(_serialize_worker(worker), message="Worker created")
-
-
-@router.get("/workers")
-def list_workers(
-    request: Request,
-    include_inactive: bool = Query(True, description="Set false to show only active workers"),
-    db: Session = Depends(get_db),
-):
-    workers = service.list_workers(db, _tenant_id_from_request(request), include_inactive=include_inactive)
-    return api_success([_serialize_worker(worker) for worker in workers])
-
-
-@router.get("/workers/{worker_id}")
-def get_worker(worker_id: str, request: Request, db: Session = Depends(get_db)):
-    worker = service.get_worker(db, _tenant_id_from_request(request), worker_id)
-    return api_success(_serialize_worker(worker))
-
-
-@router.patch("/workers/{worker_id}")
-def update_worker(worker_id: str, payload: WorkerUpdate, request: Request, db: Session = Depends(get_db)):
-    worker = service.update_worker(db, _require_master_data_editor(request), worker_id, payload)
-    return api_success(_serialize_worker(worker), message="Worker updated")
-
+@router.patch("/workers/{worker_id}", response_model=ApiResponse[WorkerResponse])
+@role_required(["OWNER"])
+async def update_worker(worker_id: UUID, payload: WorkerUpdate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    worker = await service.update_worker(db, tenant_id, worker_id, payload)
+    return ApiResponse(data=WorkerResponse.model_validate(worker))
 
 @router.delete("/workers/{worker_id}")
-def delete_worker(worker_id: str, request: Request, db: Session = Depends(get_db)):
-    result = service.delete_worker(db, _require_master_data_editor(request), worker_id)
-    return api_success(result, message="Worker deleted")
+@role_required(["OWNER"])
+async def delete_worker(worker_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    result = await service.delete_worker(db, tenant_id, worker_id)
+    return ApiResponse(data=result)
 
 
-@router.post("/parts", status_code=status.HTTP_201_CREATED)
-def create_part(payload: PartCreate, request: Request, db: Session = Depends(get_db)):
-    part = service.create_part(db, _require_master_data_editor(request), payload)
-    return api_success(_serialize_part(part), message="Part created")
+# ---------------------------------------------------------
+# Shifts
+# ---------------------------------------------------------
+
+@router.post("/shifts", status_code=status.HTTP_201_CREATED, response_model=ApiResponse[ShiftResponse])
+@role_required(["OWNER"])
+async def create_shift(payload: ShiftCreate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    shift = await service.create_shift(db, tenant_id, payload)
+    return ApiResponse(data=ShiftResponse.model_validate(shift))
+
+@router.get("/shifts", response_model=ApiResponse[List[ShiftResponse]])
+async def list_shifts(request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    shifts = await service.list_shifts(db, tenant_id)
+    return ApiResponse(data=[ShiftResponse.model_validate(s) for s in shifts])
+
+@router.get("/shifts/{shift_id}", response_model=ApiResponse[ShiftResponse])
+async def get_shift(shift_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    shift = await service.get_shift(db, tenant_id, shift_id)
+    return ApiResponse(data=ShiftResponse.model_validate(shift))
+
+@router.patch("/shifts/{shift_id}", response_model=ApiResponse[ShiftResponse])
+@role_required(["OWNER"])
+async def update_shift(shift_id: UUID, payload: ShiftUpdate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    shift = await service.update_shift(db, tenant_id, shift_id, payload)
+    return ApiResponse(data=ShiftResponse.model_validate(shift))
+
+@router.delete("/shifts/{shift_id}")
+@role_required(["OWNER"])
+async def delete_shift(shift_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    result = await service.delete_shift(db, tenant_id, shift_id)
+    return ApiResponse(data=result)
 
 
-@router.get("/parts")
-def list_parts(request: Request, db: Session = Depends(get_db)):
-    parts = service.list_parts(db, _tenant_id_from_request(request))
-    return api_success([_serialize_part(part) for part in parts])
+# ---------------------------------------------------------
+# Parts
+# ---------------------------------------------------------
 
+@router.post("/parts", status_code=status.HTTP_201_CREATED, response_model=ApiResponse[PartResponse])
+@role_required(["OWNER"])
+async def create_part(payload: PartCreate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    part = await service.create_part(db, tenant_id, payload)
+    return ApiResponse(data=PartResponse.model_validate(part))
 
-@router.get("/parts/{part_id}")
-def get_part(part_id: str, request: Request, db: Session = Depends(get_db)):
-    part = service.get_part(db, _tenant_id_from_request(request), part_id)
-    return api_success(_serialize_part(part))
+@router.get("/parts", response_model=ApiResponse[List[PartResponse]])
+async def list_parts(request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    parts = await service.list_parts(db, tenant_id)
+    return ApiResponse(data=[PartResponse.model_validate(p) for p in parts])
 
+@router.get("/parts/{part_id}", response_model=ApiResponse[PartResponse])
+async def get_part(part_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    part = await service.get_part(db, tenant_id, part_id)
+    return ApiResponse(data=PartResponse.model_validate(part))
 
-@router.patch("/parts/{part_id}")
-def update_part(part_id: str, payload: PartUpdate, request: Request, db: Session = Depends(get_db)):
-    part = service.update_part(db, _require_master_data_editor(request), part_id, payload)
-    return api_success(_serialize_part(part), message="Part updated")
-
+@router.patch("/parts/{part_id}", response_model=ApiResponse[PartResponse])
+@role_required(["OWNER"])
+async def update_part(part_id: UUID, payload: PartUpdate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    part = await service.update_part(db, tenant_id, part_id, payload)
+    return ApiResponse(data=PartResponse.model_validate(part))
 
 @router.delete("/parts/{part_id}")
-def delete_part(part_id: str, request: Request, db: Session = Depends(get_db)):
-    result = service.delete_part(db, _require_master_data_editor(request), part_id)
-    return api_success(result, message="Part deleted")
+@role_required(["OWNER"])
+async def delete_part(part_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    result = await service.delete_part(db, tenant_id, part_id)
+    return ApiResponse(data=result)
+
+
+# ---------------------------------------------------------
+# Operations
+# ---------------------------------------------------------
+
+@router.post("/operations", status_code=status.HTTP_201_CREATED, response_model=ApiResponse[OperationResponse])
+@role_required(["OWNER"])
+async def create_operation(payload: OperationCreate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    operation = await service.create_operation(db, tenant_id, payload)
+    return ApiResponse(data=OperationResponse.model_validate(operation), message="Operation created successfully.")
+
+@router.get("/operations", response_model=ApiResponse[List[OperationResponse]])
+async def list_operations(request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    operations = await service.list_operations(db, tenant_id)
+    return ApiResponse(data=[OperationResponse.model_validate(o) for o in operations])
+
+@router.get("/operations/{operation_id}", response_model=ApiResponse[OperationResponse])
+async def get_operation(operation_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, _ = _get_context(request)
+    operation = await service.get_operation(db, tenant_id, operation_id)
+    return ApiResponse(data=OperationResponse.model_validate(operation))
+
+@router.patch("/operations/{operation_id}", response_model=ApiResponse[OperationResponse])
+@role_required(["OWNER"])
+async def update_operation(operation_id: UUID, payload: OperationUpdate, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    operation = await service.update_operation(db, tenant_id, operation_id, payload)
+    return ApiResponse(data=OperationResponse.model_validate(operation))
+
+@router.delete("/operations/{operation_id}")
+@role_required(["OWNER"])
+async def delete_operation(operation_id: UUID, request: Request, db: AsyncSession = Depends(get_async_db)):
+    tenant_id, role = _get_context(request)
+    result = await service.delete_operation(db, tenant_id, operation_id)
+    return ApiResponse(data=result, message="Operation removed.")

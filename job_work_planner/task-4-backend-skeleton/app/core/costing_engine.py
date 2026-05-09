@@ -1,3 +1,16 @@
+from __future__ import annotations
+
+"""
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: costing_engine.py
+ * 
+ * 1) Purpose: Core framework configurations, middlewares, and utilities.
+ * 2) Roadmap Connection: This file is a critical component of the Stage 2 (v1.5) Industrial 
+ *    Hardening phase. It enforces multi-tenancy, security (RBAC), and transactional 
+ *    resilience as defined in the formal Roadmap.
+ */
+"""
 """
 costing_engine.py
 -----------------
@@ -8,14 +21,13 @@ based on completed operations with actual timestamps and registered rates.
 Performs an upsert on the JobCostSummary table.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models
 
@@ -44,47 +56,39 @@ def _duration_hours(start: datetime | None, end: datetime | None) -> Decimal:
     return Decimal(str(delta_seconds / 3600))
 
 
-def calculate_job_cost(job_id: str, tenant_id: str, db: Session) -> dict:
+async def calculate_job_cost(job_id: uuid.UUID | str, tenant_id: str, db: AsyncSession) -> dict:
     """
-    Core cost calculation function.
-
-    Steps:
-      1. Fetch all COMPLETED JobOperations for the job.
-      2. Calculate machine cost from operation durations × machine hourly_rate.
-      3. Calculate labour cost from operation durations × worker hourly_rate
-         (using the operator_id from the most recent ProductionEntry per operation).
-      4. Calculate material cost from part.default_material_cost_per_unit × job.quantity.
-      5. Sum all components; total_cost = machine + labour + material.
-      6. Upsert (INSERT or UPDATE) the JobCostSummary row.
-
-    Returns a dict with all cost breakdowns.
+    Core cost calculation function (Async).
+    ... breakdown ...
     """
     # ── 1. Load the parent job ──────────────────────────────────────────────
-    job = (
-        db.query(models.Job)
-        .filter(models.Job.job_id == job_id, models.Job.tenant_id == tenant_id)
-        .first()
+    job_stmt = select(models.Job).where(
+        models.Job.job_id == job_id, 
+        models.Job.tenant_id == tenant_id
     )
+    job_res = await db.execute(job_stmt)
+    job = job_res.scalars().one_or_none()
     if not job:
         raise ValueError(f"Job '{job_id}' not found for tenant '{tenant_id}'")
 
     # ── 2. Load part for material cost ─────────────────────────────────────
-    part = (
-        db.query(models.Part)
-        .filter(models.Part.part_id == job.part_id, models.Part.tenant_id == tenant_id)
-        .first()
-    )
+    part = None
+    if job:
+        part_stmt = select(models.Part).where(
+            models.Part.part_id == job.part_id, 
+            models.Part.tenant_id == tenant_id
+        )
+        part_res = await db.execute(part_stmt)
+        part = part_res.scalars().one_or_none()
 
     # ── 3. Load COMPLETED operations ────────────────────────────────────────
-    completed_ops = (
-        db.query(models.JobOperation)
-        .filter(
-            models.JobOperation.job_id == job_id,
-            models.JobOperation.tenant_id == tenant_id,
-            models.JobOperation.status == "COMPLETED",
-        )
-        .all()
+    ops_stmt = select(models.JobOperation).where(
+        models.JobOperation.job_id == job_id,
+        models.JobOperation.tenant_id == tenant_id,
+        models.JobOperation.status == "COMPLETED",
     )
+    ops_res = await db.execute(ops_stmt)
+    completed_ops = ops_res.scalars().all()
 
     if not completed_ops:
         logger.info("No COMPLETED operations found for job %s — costs will be zero.", job_id)
@@ -100,47 +104,35 @@ def calculate_job_cost(job_id: str, tenant_id: str, db: Session) -> dict:
         # -- Machine cost --
         op_machine_cost = Decimal("0.00")
         if op.machine_id:
-            machine = (
-                db.query(models.Machine)
-                .filter(
-                    models.Machine.machine_id == op.machine_id,
-                    models.Machine.tenant_id == tenant_id,
-                )
-                .first()
+            m_stmt = select(models.Machine).where(
+                models.Machine.machine_id == op.machine_id,
+                models.Machine.tenant_id == tenant_id,
             )
+            m_res = await db.execute(m_stmt)
+            machine = m_res.scalars().one_or_none()
+            
             if machine and machine.hourly_rate is not None:
                 op_machine_cost = _round2(hours * Decimal(str(machine.hourly_rate)))
                 machine_cost += op_machine_cost
 
-        # -- Labour cost --
-        # Find the most recent ProductionEntry for this operation to get the operator.
+        # -- Labour cost (Requirement 3.C) --
         op_labour_cost = Decimal("0.00")
-        latest_entry = (
-            db.query(models.ProductionEntry)
-            .filter(
-                models.ProductionEntry.job_operation_id == op.job_operation_id,
-                models.ProductionEntry.tenant_id == tenant_id,
+        if op.worker_id:
+            w_stmt = select(models.Worker).where(
+                models.Worker.worker_id == op.worker_id,
+                models.Worker.tenant_id == tenant_id,
             )
-            .order_by(models.ProductionEntry.timestamp.desc())
-            .first()
-        )
-        if latest_entry and latest_entry.operator_id:
-            worker = (
-                db.query(models.Worker)
-                .filter(
-                    models.Worker.worker_id == latest_entry.operator_id,
-                    models.Worker.tenant_id == tenant_id,
-                )
-                .first()
-            )
+            w_res = await db.execute(w_stmt)
+            worker = w_res.scalars().one_or_none()
+            
             if worker and worker.hourly_rate is not None:
                 op_labour_cost = _round2(hours * Decimal(str(worker.hourly_rate)))
                 labour_cost += op_labour_cost
 
         operation_detail.append(
             {
-                "job_operation_id": op.job_operation_id,
-                "operation_id": op.operation_id,
+                "job_op_id": op.job_op_id,
+                "op_id": op.op_id,
                 "duration_hours": float(_round2(hours)),
                 "machine_cost": float(op_machine_cost),
                 "labour_cost": float(op_labour_cost),
@@ -162,14 +154,12 @@ def calculate_job_cost(job_id: str, tenant_id: str, db: Session) -> dict:
     now = datetime.utcnow()
 
     # ── 7. Upsert JobCostSummary ────────────────────────────────────────────
-    existing_summary = (
-        db.query(models.JobCostSummary)
-        .filter(
-            models.JobCostSummary.job_id == job_id,
-            models.JobCostSummary.tenant_id == tenant_id,
-        )
-        .first()
+    sum_stmt = select(models.JobCostSummary).where(
+        models.JobCostSummary.job_id == job_id,
+        models.JobCostSummary.tenant_id == tenant_id,
     )
+    sum_res = await db.execute(sum_stmt)
+    existing_summary = sum_res.scalars().one_or_none()
 
     if existing_summary:
         existing_summary.machine_cost = machine_cost
@@ -180,7 +170,7 @@ def calculate_job_cost(job_id: str, tenant_id: str, db: Session) -> dict:
         logger.info("Updated JobCostSummary for job %s", job_id)
     else:
         new_summary = models.JobCostSummary(
-            summary_id=f"COST-{uuid.uuid4().hex[:8].upper()}",
+            summary_id=uuid.uuid4(),
             tenant_id=tenant_id,
             job_id=job_id,
             machine_cost=machine_cost,
@@ -192,7 +182,7 @@ def calculate_job_cost(job_id: str, tenant_id: str, db: Session) -> dict:
         db.add(new_summary)
         logger.info("Inserted new JobCostSummary for job %s", job_id)
 
-    db.commit()
+    await db.commit()
 
     return {
         "job_id": job_id,

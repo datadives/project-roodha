@@ -1,3 +1,13 @@
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: App.jsx
+ * 
+ * 1) Purpose: Frontend core logic.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
 import React, { useEffect, useState, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes, useOutletContext } from 'react-router-dom'
 import AccessDeniedPage from './components/AccessDeniedPage'
@@ -7,31 +17,36 @@ import JobsPage from './pages/JobsPage'
 import MasterDataPage from './pages/MasterDataPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import NotificationsPage from './pages/NotificationsPage'
+import UserManagement from './pages/UserManagement'
 import LoginPage from './pages/LoginPage'
-import { getAuthContext, getStoredDevAuthContext } from './lib/auth'
+import { useAuth } from './context/AuthContext'
 import { getDefaultRouteForRole, hasAnyRole, listAllowedRoleLabels } from './lib/roles'
 import ErrorBoundary from './components/common/ErrorBoundary'
 
-function ProtectedRoute() {
-  const [auth, setAuth] = useState(() => getStoredDevAuthContext())
-  const [loading, setLoading] = useState(() => !Boolean(getStoredDevAuthContext()?.token))
+function ProtectedRoute({ allowedRoles = [] }) {
+  const { auth, isAuthenticated, isInitializing } = useAuth()
 
-  useEffect(() => {
-    if (auth?.token) {
-      setLoading(false)
-      return
-    }
+  if (isInitializing) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0F172A]">
+        <div className="flex flex-col items-center">
+          <div className="relative flex h-12 w-12 items-center justify-center">
+            <div className="absolute h-full w-full animate-ping rounded-full bg-orange-500/20" />
+            <div className="h-4 w-4 animate-spin rounded-sm bg-orange-500" />
+          </div>
+          <div className="mt-8 text-[10px] font-black uppercase tracking-[0.4em] text-slate-500">
+            Verifying Secure Session
+          </div>
+        </div>
+      </div>
+    )
+  }
 
-    getAuthContext().then(setAuth).catch(() => setAuth(null)).finally(() => setLoading(false))
-  }, [])
+  if (!isAuthenticated) return <Navigate to="/login" replace />
 
-  if (loading) return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50">
-      <div className="text-sm font-medium text-slate-500 animate-pulse">Initializing workplace...</div>
-    </div>
-  )
-  
-  if (!auth?.token) return <Navigate to="/login" replace />
+  if (allowedRoles.length > 0 && !hasAnyRole(auth?.userRole, allowedRoles)) {
+    return <Navigate to="/unauthorized" replace />
+  }
 
   return <Outlet context={auth} />
 }
@@ -39,13 +54,13 @@ function ProtectedRoute() {
 function RoleRoute({ allowedRoles, title, message }) {
   const auth = useOutletContext()
 
-  if (!hasAnyRole(auth?.user_role, allowedRoles)) {
+  if (!hasAnyRole(auth?.userRole, allowedRoles)) {
     return (
       <AccessDeniedPage
         title={title}
         message={message}
         allowedRoles={listAllowedRoleLabels(allowedRoles)}
-        homePath={getDefaultRouteForRole(auth?.user_role)}
+        homePath={getDefaultRouteForRole(auth?.userRole)}
       />
     )
   }
@@ -56,44 +71,74 @@ function RoleRoute({ allowedRoles, title, message }) {
 function HomeRoute() {
   const auth = useOutletContext()
 
-  if (!hasAnyRole(auth?.user_role, ['OWNER', 'ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR'])) {
-    return <Navigate to={getDefaultRouteForRole(auth?.user_role)} replace />
+  // Role-Based Navigation Guard
+  if (auth?.userRole === 'OPERATOR') {
+    return <Navigate to="/operator" replace />
+  }
+
+  if (!hasAnyRole(auth?.userRole, ['OWNER', 'SUPERVISOR'])) {
+    return <Navigate to={getDefaultRouteForRole(auth?.userRole)} replace />
   }
 
   return <DashboardPage auth={auth} />
 }
 
 export default function App() {
+  const { isInitializing } = useAuth()
+
+  if (isInitializing) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0F172A]">
+        <div className="flex flex-col items-center">
+          <div className="relative flex h-12 w-12 items-center justify-center">
+            <div className="absolute h-full w-full animate-ping rounded-full bg-orange-500/20" />
+            <div className="h-4 w-4 animate-spin rounded-sm bg-orange-500" />
+          </div>
+          <div className="mt-8 text-[10px] font-black uppercase tracking-[0.4em] text-slate-500">
+            Verifying Secure Session
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <ErrorBoundary>
       <Suspense fallback={<div>Loading component...</div>}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<LoginPage initialMode="CREATE_ACCOUNT" />} />
+          <Route path="/register/confirm" element={<LoginPage initialMode="CONFIRM_SIGN_UP" />} />
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>
-              <Route path="/" element={<HomeRoute />} />
+              <Route index element={<Navigate to="/dashboard" replace />} />
               <Route
+                path="/unauthorized"
                 element={
-                  <RoleRoute
-                    allowedRoles={['OWNER', 'ADMIN', 'SUPERVISOR']}
-                    title="Supervisor workspace only"
-                    message="Job intake and master data updates are limited to supervisors, owners, and admins so planning inputs stay controlled."
+                  <AccessDeniedPage
+                    title="Unauthorized workspace"
+                    message="Your Cognito role does not allow this V1.5 workspace. Use the navigation assigned to your role."
+                    homePath="/"
                   />
                 }
+              />
+              <Route path="/dashboard" element={<HomeRoute />} />
+              <Route
+                element={<ProtectedRoute allowedRoles={['OPERATOR']} />}
+              >
+                <Route path="/operator" element={<DashboardPage />} />
+              </Route>
+              <Route
+                element={<ProtectedRoute allowedRoles={['OWNER', 'SUPERVISOR']} />}
               >
                 <Route path="/jobs" element={<JobsPage />} />
                 <Route path="/master-data" element={<MasterDataPage />} />
               </Route>
               <Route
-                element={
-                  <RoleRoute
-                    allowedRoles={['OWNER', 'ADMIN', 'SUPERVISOR', 'PLANNER']}
-                    title="Planning access required"
-                    message="This workspace is reserved for roles that are allowed to view WIP metrics, planning load, and analytics."
-                  />
-                }
+                element={<ProtectedRoute allowedRoles={['OWNER']} />}
               >
                 <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/users" element={<UserManagement />} />
               </Route>
               <Route path="/notifications" element={<NotificationsPage />} />
             </Route>

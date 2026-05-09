@@ -1,3 +1,13 @@
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: NotificationsPage.jsx
+ * 
+ * 1) Purpose: Top-level page component for NotificationsPage.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { fetchNotifications, markNotificationRead } from '../lib/notificationsApi'
@@ -30,8 +40,8 @@ function prettifyType(value) {
 
 function unreadBadgeClass(isRead) {
   return isRead
-    ? 'bg-slate-100 text-slate-500'
-    : 'bg-amber-100 text-amber-700'
+    ? 'bg-slate-900 text-slate-500 border border-slate-700'
+    : 'bg-orange-500/10 text-orange-300 border border-orange-500/30'
 }
 
 export default function NotificationsPage() {
@@ -79,20 +89,20 @@ export default function NotificationsPage() {
 
   return (
     <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-[32px] border border-white/80 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.18),transparent_28%),radial-gradient(circle_at_84%_16%,_rgba(14,165,233,0.2),transparent_24%),linear-gradient(135deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
-        <div className="absolute -right-8 top-10 h-28 w-28 rounded-full bg-amber-200/40 blur-3xl" />
+      <section className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
+        <div className="absolute -right-8 top-10 h-28 w-28 rounded-full bg-orange-500/10 blur-3xl" />
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Alerts & Updates</p>
-            <h1 className="mt-3 text-4xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+            <h1 className="mt-3 text-4xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
               Notifications center
             </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
               Review tenant broadcasts and personal factory alerts, then acknowledge them directly from one inbox.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <div className="rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700">
+            <div className="rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-semibold text-slate-300">
               Unread: {unreadCount}
             </div>
             <div className="rounded-full border border-white/70 bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
@@ -102,11 +112,11 @@ export default function NotificationsPage() {
         </div>
       </section>
 
-      <section className="rounded-[30px] border border-white/70 bg-white/88 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
+      <section className="rounded-[30px] border border-slate-800 bg-slate-900/60 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Inbox</p>
-            <h2 className="mt-2 text-3xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+            <h2 className="mt-2 text-3xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
               Factory alerts
             </h2>
           </div>
@@ -116,7 +126,7 @@ export default function NotificationsPage() {
             className={`rounded-full px-5 py-2.5 text-sm font-semibold transition ${
               showUnreadOnly
                 ? 'bg-slate-900 text-white'
-                : 'border border-slate-200 bg-white text-slate-600'
+                : 'border border-slate-700 bg-slate-950 text-slate-300'
             }`}
           >
             {showUnreadOnly ? 'Showing unread only' : 'Show unread only'}
@@ -124,7 +134,7 @@ export default function NotificationsPage() {
         </div>
 
         {loading ? (
-          <div className="mt-6 rounded-[24px] border border-slate-100 bg-slate-50 p-6 text-sm text-slate-500">
+          <div className="mt-6 rounded-[24px] border border-slate-800 bg-slate-950 p-6 text-sm text-slate-500">
             Loading notifications...
           </div>
         ) : notifications.length > 0 ? (
@@ -134,8 +144,8 @@ export default function NotificationsPage() {
                 key={notification.notification_id}
                 className={`rounded-[26px] border p-5 transition ${
                   notification.is_read
-                    ? 'border-slate-200 bg-slate-50/80'
-                    : 'border-amber-200 bg-amber-50/60 shadow-[0_12px_30px_rgba(251,191,36,0.08)]'
+                    ? 'border-slate-800 bg-slate-950'
+                    : 'border-orange-500/30 bg-slate-900 shadow-[0_12px_30px_rgba(249,115,22,0.08)]'
                 }`}
               >
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -148,7 +158,7 @@ export default function NotificationsPage() {
                         {notification.is_read ? 'Read' : 'Unread'}
                       </span>
                     </div>
-                    <p className="text-base leading-7 text-slate-800">{notification.message}</p>
+                    <p className="text-base leading-7 text-slate-200">{notification.message}</p>
                     <div className="flex flex-wrap gap-4 text-xs uppercase tracking-[0.16em] text-slate-500">
                       <span>{formatTimestamp(notification.created_at)}</span>
                       <span>{notification.user_id ? 'Personal' : 'Broadcast'}</span>
@@ -161,12 +171,12 @@ export default function NotificationsPage() {
                         type="button"
                         onClick={() => handleMarkRead(notification.notification_id)}
                         disabled={markingId === notification.notification_id}
-                        className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="rounded-full border border-orange-500/40 bg-orange-500/10 px-4 py-2 text-sm font-semibold text-orange-300 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {markingId === notification.notification_id ? 'Marking...' : 'Mark as read'}
                       </button>
                     ) : (
-                      <div className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-500">
+                      <div className="rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-semibold text-slate-500">
                         Acknowledged
                       </div>
                     )}
@@ -176,7 +186,7 @@ export default function NotificationsPage() {
             ))}
           </div>
         ) : (
-          <div className="mt-6 rounded-[24px] border border-dashed border-slate-200 bg-slate-50/80 p-6 text-sm leading-6 text-slate-500">
+          <div className="mt-6 rounded-[24px] border border-dashed border-slate-700 bg-slate-950 p-6 text-sm leading-6 text-slate-500">
             {showUnreadOnly
               ? 'No unread notifications right now. Your inbox is clear.'
               : 'No notifications have been generated for this tenant yet.'}

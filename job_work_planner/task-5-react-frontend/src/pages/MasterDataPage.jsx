@@ -1,7 +1,18 @@
-import { startTransition, useEffect, useMemo, useState } from 'react'
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: MasterDataPage.jsx
+ * 
+ * 1) Purpose: Top-level page component for MasterDataPage.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
+import { startTransition, useEffect, useMemo, useState, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
 import { DEV_TENANT_ID, getAuthContext } from '../lib/auth'
 import { normalizeRole } from '../lib/roles'
+import { cn } from '../lib/utils'
 import {
   createCustomer,
   createMachine,
@@ -25,17 +36,17 @@ import {
 } from '../lib/masterDataApi'
 
 const sectionCards = [
-  { key: 'customers', label: 'Customers', tone: 'from-amber-200 via-orange-100 to-white', detail: 'Active-first registry with safe delete rules.' },
-  { key: 'machines', label: 'Machines', tone: 'from-sky-200 via-cyan-100 to-white', detail: 'Shop-floor assets with guarded deactivation.' },
-  { key: 'parts', label: 'Parts', tone: 'from-emerald-200 via-lime-100 to-white', detail: 'Part masters with required operation routes.' },
-  { key: 'shifts', label: 'Shifts', tone: 'from-rose-200 via-pink-100 to-white', detail: 'Daily capacity windows for planning.' },
-  { key: 'workers', label: 'Workers', tone: 'from-violet-200 via-fuchsia-100 to-white', detail: 'Roster management for operators and leads.' },
+  { key: 'customers', label: 'Customers', tone: 'bg-slate-800 border-slate-700 text-orange-500', detail: 'Active-first registry with safe delete rules.' },
+  { key: 'machines', label: 'Machines', tone: 'bg-slate-800 border-slate-700 text-slate-300', detail: 'Shop-floor assets with guarded deactivation.' },
+  { key: 'parts', label: 'Parts', tone: 'bg-slate-800 border-slate-700 text-orange-300', detail: 'Part masters with required operation routes.' },
+  { key: 'shifts', label: 'Shifts', tone: 'bg-slate-800 border-slate-700 text-slate-400', detail: 'Daily capacity windows for planning.' },
+  { key: 'workers', label: 'Workers', tone: 'bg-slate-800 border-slate-700 text-slate-300', detail: 'Roster management for operators and leads.' },
 ]
 
 const inputClass =
-  'w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-100'
-const labelClass = 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-500'
-const panelClass = 'rounded-[28px] border border-white/70 bg-white/85 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur'
+  'w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-slate-200 shadow-inner outline-none transition focus:border-orange-500 focus:ring-1 focus:ring-orange-500/20 font-mono'
+const labelClass = 'text-[10px] font-black uppercase tracking-[0.24em] text-slate-300'
+const panelClass = 'rounded-[28px] border border-slate-700 bg-slate-800 p-6 shadow-2xl backdrop-blur-md'
 
 function asArray(value) {
   return Array.isArray(value) ? value : []
@@ -50,7 +61,16 @@ function emptyMachineForm() {
 }
 
 function emptyPartForm(customerId = '') {
-  return { part_number: '', customer_id: customerId, steps: ['Cutting', 'Machining', 'Quality Check'], default_material_cost_per_unit: '' }
+  return { 
+    part_number: '', 
+    customer_id: customerId, 
+    steps: [
+      { id: 'step-1', label: 'Cutting' },
+      { id: 'step-2', label: 'Machining' },
+      { id: 'step-3', label: 'Quality Check' }
+    ], 
+    default_material_cost_per_unit: '' 
+  }
 }
 
 function emptyShiftForm() {
@@ -83,14 +103,17 @@ function SectionButton({ section, activeSection, onSelect, count }) {
     <button
       type="button"
       onClick={() => onSelect(section.key)}
-      className={`rounded-[24px] border px-4 py-4 text-left transition ${active ? 'border-slate-900 bg-slate-900 text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)]' : 'border-white/70 bg-white/70 text-slate-700 hover:border-slate-300 hover:bg-white'}`}
+      className={`rounded-[24px] border px-5 py-6 text-left transition-all ${active ? 'border-orange-500 bg-orange-600 text-white shadow-[0_0_30px_-5px_rgba(249,115,22,0.4)] translate-y-[-2px]' : 'border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700 hover:bg-slate-800/60'}`}
     >
-      <div className={`mb-3 rounded-2xl bg-gradient-to-br ${section.tone} p-3`}>
-        <div className="text-sm font-semibold uppercase tracking-[0.18em]">{section.label}</div>
+      <div className={`mb-4 flex h-10 w-10 items-center justify-center rounded-xl border-2 font-black ${section.tone}`}>
+        {section.label[0]}
       </div>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm leading-6">{section.detail}</p>
-        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${active ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-600'}`}>{count}</span>
+        <div>
+          <h3 className={`text-base font-black uppercase tracking-widest ${active ? 'text-white' : 'text-slate-200'}`}>{section.label}</h3>
+          <p className={`mt-2 text-[11px] font-medium leading-relaxed ${active ? 'text-orange-100' : 'text-slate-500'}`}>{section.detail}</p>
+        </div>
+        <span className={`rounded-lg border px-3 py-1 text-xs font-black font-mono tabular-nums ${active ? 'border-white/20 bg-white/10 text-white' : 'border-slate-800 bg-slate-950 text-slate-500'}`}>{count}</span>
       </div>
     </button>
   )
@@ -98,13 +121,16 @@ function SectionButton({ section, activeSection, onSelect, count }) {
 
 function SectionHeader({ eyebrow, title, detail, action }) {
   return (
-    <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">{eyebrow}</p>
-        <h2 className="mt-2 text-3xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="h-0.5 w-6 bg-orange-500" />
+          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-orange-500">{eyebrow}</p>
+        </div>
+        <h2 className="text-3xl font-black text-white uppercase tracking-tighter">
           {title}
         </h2>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{detail}</p>
+        <p className="mt-2 max-w-2xl text-xs font-bold leading-relaxed text-slate-300 uppercase tracking-wider">{detail}</p>
       </div>
       {action}
     </div>
@@ -113,7 +139,7 @@ function SectionHeader({ eyebrow, title, detail, action }) {
 
 function StatusChip({ active, label }) {
   return (
-    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${active ? 'bg-orange-500/10 text-orange-300 border border-orange-500/30' : 'bg-slate-900 text-slate-400 border border-slate-700'}`}>
       {label}
     </span>
   )
@@ -122,19 +148,29 @@ function StatusChip({ active, label }) {
 function InlineToggle({ checked, onChange, label }) {
   return (
     <label className="inline-flex items-center gap-3 text-sm text-slate-600">
-      <input type="checkbox" checked={checked} onChange={onChange} className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-300" />
+      <input type="checkbox" checked={checked} onChange={onChange} className="h-4 w-4 rounded border-slate-500 bg-slate-900 text-orange-500 focus:ring-orange-500" />
       {label}
     </label>
   )
 }
 
-function EmptyStatePanel({ title, detail, ctaLabel, onCta }) {
+function EmptyStatePanel({ title, detail, ctaLabel, onCta, eyebrow = 'Getting Started' }) {
   return (
-    <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50/85 p-5 text-sm text-slate-600">
-      <p className="font-semibold text-slate-900">{title}</p>
-      <p className="mt-2 leading-6">{detail}</p>
+    <div className="rounded-[32px] border border-orange-500/20 bg-orange-500/5 p-8 text-center shadow-xl backdrop-blur-sm relative overflow-hidden">
+      <div className="absolute top-0 right-0 -mr-16 -mt-16 h-32 w-32 bg-orange-500/10 rounded-full blur-3xl" />
+      <div className="flex items-center justify-center gap-2 mb-4">
+        <div className="h-0.5 w-4 bg-orange-500" />
+        <span className="text-[10px] font-black uppercase tracking-[0.4em] text-orange-500">{eyebrow}</span>
+        <div className="h-0.5 w-4 bg-orange-500" />
+      </div>
+      <p className="text-2xl font-black text-white uppercase tracking-tighter">{title}</p>
+      <p className="mt-4 mx-auto max-w-md text-sm font-medium leading-relaxed text-slate-400">{detail}</p>
       {ctaLabel ? (
-        <button type="button" onClick={onCta} className="mt-4 rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm">
+        <button 
+          type="button" 
+          onClick={onCta} 
+          className="mt-8 rounded-xl bg-orange-500 px-8 py-3 text-sm font-black uppercase tracking-widest text-[#0F172A] shadow-lg transition-all hover:bg-orange-400 active:scale-[0.98]"
+        >
           {ctaLabel}
         </button>
       ) : null}
@@ -198,7 +234,7 @@ export default function MasterDataPage() {
     getAuthContext().then(setAuth).catch(() => setAuth(null))
   }, [])
 
-  async function loadCustomers(includeInactive = includeInactiveCustomers) {
+  const loadCustomers = useCallback(async (includeInactive = includeInactiveCustomers) => {
     setLoading((current) => ({ ...current, customers: true }))
     try {
       const safeAllCustomers = asArray(await fetchCustomers(true))
@@ -216,9 +252,9 @@ export default function MasterDataPage() {
     } finally {
       setLoading((current) => ({ ...current, customers: false }))
     }
-  }
+  }, [includeInactiveCustomers])
 
-  async function loadMachines() {
+  const loadMachines = useCallback(async () => {
     setLoading((current) => ({ ...current, machines: true }))
     try {
       setMachines(asArray(await fetchMachines()))
@@ -227,9 +263,9 @@ export default function MasterDataPage() {
     } finally {
       setLoading((current) => ({ ...current, machines: false }))
     }
-  }
+  }, [])
 
-  async function loadParts() {
+  const loadParts = useCallback(async () => {
     setLoading((current) => ({ ...current, parts: true }))
     try {
       setParts(asArray(await fetchParts()))
@@ -238,9 +274,9 @@ export default function MasterDataPage() {
     } finally {
       setLoading((current) => ({ ...current, parts: false }))
     }
-  }
+  }, [])
 
-  async function loadShifts() {
+  const loadShifts = useCallback(async () => {
     setLoading((current) => ({ ...current, shifts: true }))
     try {
       setShifts(asArray(await fetchShifts()))
@@ -249,9 +285,9 @@ export default function MasterDataPage() {
     } finally {
       setLoading((current) => ({ ...current, shifts: false }))
     }
-  }
+  }, [])
 
-  async function loadWorkers() {
+  const loadWorkers = useCallback(async () => {
     setLoading((current) => ({ ...current, workers: true }))
     try {
       setWorkers(asArray(await fetchWorkers(true)))
@@ -260,18 +296,18 @@ export default function MasterDataPage() {
     } finally {
       setLoading((current) => ({ ...current, workers: false }))
     }
-  }
+  }, [])
 
   useEffect(() => {
     loadCustomers(includeInactiveCustomers)
-  }, [includeInactiveCustomers])
+  }, [includeInactiveCustomers, loadCustomers])
 
   useEffect(() => {
     loadMachines()
     loadParts()
     loadShifts()
     loadWorkers()
-  }, [])
+  }, [loadMachines, loadParts, loadShifts, loadWorkers])
 
   async function handleCustomerSubmit(event) {
     event.preventDefault()
@@ -326,7 +362,7 @@ export default function MasterDataPage() {
 
   async function handlePartSubmit(event) {
     event.preventDefault()
-    const cleanedSteps = asArray(partForm.steps).map((step) => step.trim()).filter(Boolean)
+    const cleanedSteps = asArray(partForm.steps).map((step) => step.label.trim()).filter(Boolean)
     if (cleanedSteps.length === 0) {
       toast.error('Add at least one default operation step')
       return
@@ -495,7 +531,7 @@ export default function MasterDataPage() {
     setPartForm({
       part_number: part.part_number,
       customer_id: part.customer_id,
-      steps: routeLabels(part.default_operations_route),
+      steps: routeLabels(part.default_operations_route).map((label, idx) => ({ id: `step-${idx}-${Date.now()}`, label })),
       default_material_cost_per_unit: part.default_material_cost_per_unit != null ? String(part.default_material_cost_per_unit) : '',
     })
   }
@@ -522,12 +558,12 @@ export default function MasterDataPage() {
   function updatePartStep(index, value) {
     setPartForm((current) => ({
       ...current,
-      steps: asArray(current.steps).map((step, stepIndex) => (stepIndex === index ? value : step)),
+      steps: asArray(current.steps).map((step, stepIndex) => (stepIndex === index ? { ...step, label: value } : step)),
     }))
   }
 
   function addPartStep() {
-    setPartForm((current) => ({ ...current, steps: [...current.steps, ''] }))
+    setPartForm((current) => ({ ...current, steps: [...current.steps, { id: `step-${Date.now()}-${Math.random()}`, label: '' }] }))
   }
 
   function removePartStep(index) {
@@ -554,33 +590,33 @@ export default function MasterDataPage() {
             }
           />
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="text-left text-slate-500">
+            <table className="industrial-table">
+              <thead>
                 <tr>
-                  <th className="pb-3 font-medium">Customer</th>
-                  <th className="pb-3 font-medium">Contact</th>
-                  <th className="pb-3 font-medium">Status</th>
-                  <th className="pb-3 font-medium text-right">Actions</th>
+                  <th>Customer</th>
+                  <th>Contact</th>
+                  <th>Status</th>
+                  <th className="text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {asArray(customers).map((customer) => (
                   <tr key={customer.customer_id}>
-                    <td className="py-3 pr-4">
-                      <div className="font-medium text-slate-800">{customer.name}</div>
-                      <div className="text-xs text-slate-400">{customer.customer_id}</div>
+                    <td>
+                      <div className="font-black text-white uppercase tracking-tight">{customer.name}</div>
+                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">{customer.customer_id}</div>
                     </td>
-                    <td className="py-3 pr-4 text-slate-600">{customer.contact || 'No contact yet'}</td>
-                    <td className="py-3 pr-4">
+                    <td className="text-slate-300 font-medium">{customer.contact || 'No contact yet'}</td>
+                    <td>
                       <StatusChip active={customer.is_active} label={customer.is_active ? 'Active' : 'Inactive'} />
                     </td>
-                    <td className="py-3 text-right">
+                    <td className="text-right">
                       <div className="flex justify-end gap-2">
                         <button type="button" onClick={() => selectCustomer(customer)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400">
                           Edit
                         </button>
                         {canDeleteMasterData ? (
-                          <button type="button" onClick={() => handleCustomerDelete(customer)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
+                          <button type="button" onClick={() => handleCustomerDelete(customer)} className="rounded-full border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:border-orange-500 hover:text-orange-300">
                             Delete
                           </button>
                         ) : null}
@@ -593,9 +629,10 @@ export default function MasterDataPage() {
             {!loading.customers && asArray(customers).length === 0 ? (
               <div className="py-6">
                 <EmptyStatePanel
+                  eyebrow="Customer Registry"
                   title="No customers yet"
                   detail="Start by adding your first client so parts and jobs have a real customer to connect to."
-                  ctaLabel="Add your first client"
+                  ctaLabel="Register First Client"
                   onCta={() => document.getElementById('customer-form-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
                 />
               </div>
@@ -620,7 +657,7 @@ export default function MasterDataPage() {
             </div>
             <InlineToggle checked={customerForm.is_active} onChange={(event) => setCustomerForm((current) => ({ ...current, is_active: event.target.checked }))} label="Customer is active" />
             <div className="flex gap-3">
-              <button type="submit" disabled={!canSubmitCustomer} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="submit" disabled={!canSubmitCustomer} className="rounded-full bg-orange-500 hover:bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 transition-colors">
                 {savingKey === 'customer' ? 'Saving...' : editingCustomerId ? 'Update customer' : 'Create customer'}
               </button>
               <button type="button" onClick={() => { setCustomerForm(emptyCustomerForm()); setEditingCustomerId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -641,11 +678,11 @@ export default function MasterDataPage() {
           />
           <div className="grid gap-4 md:grid-cols-2">
             {asArray(machines).map((machine) => (
-              <article key={machine.machine_id} className="rounded-[24px] border border-slate-100 bg-slate-50/85 p-4">
+              <article key={machine.machine_id} className="rounded-[24px] border border-slate-700 bg-slate-800 p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-lg font-semibold text-slate-900">{machine.name}</h3>
-                    <p className="text-sm text-slate-500">{machine.type}</p>
+                    <h3 className="text-lg font-semibold text-white">{machine.name}</h3>
+                    <p className="text-sm text-slate-300">{machine.type}</p>
                   </div>
                   <StatusChip active={machine.is_active} label={machine.is_active ? 'Active' : 'Inactive'} />
                 </div>
@@ -660,7 +697,7 @@ export default function MasterDataPage() {
                     type="button"
                     disabled={machine.is_active && machine.has_active_jobs}
                     onClick={() => handleMachineActivation(machine)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-semibold ${machine.is_active && machine.has_active_jobs ? 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400' : machine.is_active ? 'border border-amber-200 bg-amber-50 text-amber-700' : 'border border-emerald-200 bg-emerald-50 text-emerald-700'}`}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold ${machine.is_active && machine.has_active_jobs ? 'cursor-not-allowed border border-slate-700 bg-slate-900 text-slate-500' : machine.is_active ? 'border border-slate-600 bg-slate-900 text-slate-300' : 'border border-orange-500/30 bg-orange-500/10 text-orange-300'}`}
                   >
                     {savingKey === `machine-toggle-${machine.machine_id}` ? 'Working...' : machine.is_active ? 'Deactivate' : 'Reactivate'}
                   </button>
@@ -671,9 +708,10 @@ export default function MasterDataPage() {
           {!loading.machines && asArray(machines).length === 0 ? (
             <div className="pt-6">
               <EmptyStatePanel
-                title="No machines registered yet"
-                detail="Add your first machine so planners can assign work without guessing capacity."
-                ctaLabel="Add first machine"
+                eyebrow="Asset Management"
+                title="No machines registered"
+                detail="Register your first machine to begin production tracking and unlock the Machine Load Radar."
+                ctaLabel="Register First Machine"
                 onCta={() => document.getElementById('machine-form-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
               />
             </div>
@@ -698,7 +736,7 @@ export default function MasterDataPage() {
             <div>
               <label className={labelClass}>Hourly Rate (₹)</label>
               <input
-                className={inputClass}
+                className={cn(inputClass, "tabular-nums")}
                 type="number"
                 min="0"
                 step="0.01"
@@ -709,7 +747,7 @@ export default function MasterDataPage() {
             </div>
             <InlineToggle checked={machineForm.is_active} onChange={(event) => setMachineForm((current) => ({ ...current, is_active: event.target.checked }))} label="Machine is active" />
             <div className="flex gap-3">
-              <button type="submit" disabled={!canSubmitMachine} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="submit" disabled={!canSubmitMachine} className="rounded-full bg-orange-500 hover:bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 transition-colors">
                 {savingKey === 'machine' ? 'Saving...' : editingMachineId ? 'Update machine' : 'Create machine'}
               </button>
               <button type="button" onClick={() => { setMachineForm(emptyMachineForm()); setEditingMachineId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -730,18 +768,18 @@ export default function MasterDataPage() {
           />
           <div className="space-y-4">
             {asArray(parts).map((part) => (
-              <article key={part.part_id} className="rounded-[24px] border border-slate-100 bg-slate-50/80 p-4">
+              <article key={part.part_id} className="rounded-[24px] border border-slate-700 bg-slate-800 p-6">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <h3 className="text-lg font-semibold text-slate-900">{part.part_number}</h3>
-                    <p className="text-sm text-slate-500">Customer: {asArray(customerCatalog).find((customer) => customer.customer_id === part.customer_id)?.name || part.customer_id}</p>
+                    <h3 className="text-lg font-semibold text-white">{part.part_number}</h3>
+                    <p className="text-sm text-slate-300">Customer: {asArray(customerCatalog).find((customer) => customer.customer_id === part.customer_id)?.name || part.customer_id}</p>
                   </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={() => selectPart(part)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400">
                       Edit
                     </button>
                     {canDeleteMasterData ? (
-                      <button type="button" onClick={() => handlePartDelete(part)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
+                      <button type="button" onClick={() => handlePartDelete(part)} className="rounded-full border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:border-orange-500 hover:text-orange-300">
                         Delete
                       </button>
                     ) : null}
@@ -798,9 +836,9 @@ export default function MasterDataPage() {
               </div>
               <div className="space-y-3">
                 {(asArray(partForm.steps)?.map((step, index) => (
-                  <div key={`step-${index}`} className="flex items-center gap-3">
+                  <div key={step.id} className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">{index + 1}</div>
-                    <input className={inputClass} value={step} onChange={(event) => updatePartStep(index, event.target.value)} placeholder="Machining" required />
+                    <input className={inputClass} value={step.label} onChange={(event) => updatePartStep(index, event.target.value)} placeholder="Machining" required />
                     <button type="button" onClick={() => removePartStep(index)} disabled={partForm.steps.length === 1} className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500 disabled:cursor-not-allowed disabled:opacity-40">
                       Remove
                     </button>
@@ -821,7 +859,7 @@ export default function MasterDataPage() {
               />
             </div>
             <div className="flex gap-3">
-              <button type="submit" disabled={!canSubmitPart} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="submit" disabled={!canSubmitPart} className="rounded-full bg-orange-500 hover:bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 transition-colors">
                 {savingKey === 'part' ? 'Saving...' : editingPartId ? 'Update part' : 'Create part'}
               </button>
               <button type="button" onClick={() => { setPartForm(emptyPartForm(asArray(customerCatalog)[0]?.customer_id || '')); setEditingPartId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -841,28 +879,28 @@ export default function MasterDataPage() {
             detail="Set the daily time blocks your planners can assign operations into."
           />
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="text-left text-slate-500">
+            <table className="industrial-table">
+              <thead>
                 <tr>
-                  <th className="pb-3 font-medium">Shift</th>
-                  <th className="pb-3 font-medium">Start</th>
-                  <th className="pb-3 font-medium">End</th>
-                  <th className="pb-3 font-medium text-right">Actions</th>
+                  <th>Shift</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th className="text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {asArray(shifts).map((shift) => (
                   <tr key={shift.shift_id}>
-                    <td className="py-3 pr-4 font-medium text-slate-800">{shift.name}</td>
-                    <td className="py-3 pr-4 text-slate-600">{shift.start_time}</td>
-                    <td className="py-3 pr-4 text-slate-600">{shift.end_time}</td>
-                    <td className="py-3 text-right">
+                    <td className="font-medium text-white">{shift.name}</td>
+                    <td className="text-slate-300">{shift.start_time}</td>
+                    <td className="text-slate-300">{shift.end_time}</td>
+                    <td className="text-right">
                       <div className="flex justify-end gap-2">
                         <button type="button" onClick={() => selectShift(shift)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400">
                           Edit
                         </button>
                         {canDeleteMasterData ? (
-                          <button type="button" onClick={() => handleShiftDelete(shift)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
+                          <button type="button" onClick={() => handleShiftDelete(shift)} className="rounded-full border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:border-orange-500 hover:text-orange-300">
                             Delete
                           </button>
                         ) : null}
@@ -907,7 +945,7 @@ export default function MasterDataPage() {
               </div>
             </div>
             <div className="flex gap-3">
-              <button type="submit" disabled={!canSubmitShift} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="submit" disabled={!canSubmitShift} className="rounded-full bg-orange-500 hover:bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 transition-colors">
                 {savingKey === 'shift' ? 'Saving...' : editingShiftId ? 'Update shift' : 'Create shift'}
               </button>
               <button type="button" onClick={() => { setShiftForm(emptyShiftForm()); setEditingShiftId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -928,10 +966,10 @@ export default function MasterDataPage() {
           />
           <div className="grid gap-3">
             {asArray(workers).map((worker) => (
-              <article key={worker.worker_id} className="flex flex-col gap-3 rounded-[24px] border border-slate-100 bg-slate-50/80 p-4 md:flex-row md:items-center md:justify-between">
+              <article key={worker.worker_id} className="flex flex-col gap-3 rounded-[24px] border border-slate-700 bg-slate-800 p-6 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">{worker.name}</h3>
-                  <p className="text-sm text-slate-500">{worker.role}</p>
+                  <h3 className="text-lg font-semibold text-white">{worker.name}</h3>
+                  <p className="text-sm text-slate-300">{worker.role}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip active={worker.is_active} label={worker.is_active ? 'Active' : 'Inactive'} />
@@ -939,7 +977,7 @@ export default function MasterDataPage() {
                     Edit
                   </button>
                   {canDeleteMasterData ? (
-                    <button type="button" onClick={() => handleWorkerDelete(worker)} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:border-rose-400">
+                    <button type="button" onClick={() => handleWorkerDelete(worker)} className="rounded-full border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:border-orange-500 hover:text-orange-300">
                       Delete
                     </button>
                   ) : null}
@@ -986,7 +1024,7 @@ export default function MasterDataPage() {
             </div>
             <InlineToggle checked={workerForm.is_active} onChange={(event) => setWorkerForm((current) => ({ ...current, is_active: event.target.checked }))} label="Worker is active" />
             <div className="flex gap-3">
-              <button type="submit" disabled={!canSubmitWorker} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="submit" disabled={!canSubmitWorker} className="rounded-full bg-orange-500 hover:bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 transition-colors">
                 {savingKey === 'worker' ? 'Saving...' : editingWorkerId ? 'Update worker' : 'Create worker'}
               </button>
               <button type="button" onClick={() => { setWorkerForm(emptyWorkerForm()); setEditingWorkerId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
@@ -1001,28 +1039,28 @@ export default function MasterDataPage() {
 
   return (
     <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-[32px] border border-white/80 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.28),transparent_34%),radial-gradient(circle_at_85%_15%,_rgba(14,165,233,0.18),transparent_28%),linear-gradient(135deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
-        <div className="absolute -right-10 top-10 h-36 w-36 rounded-full bg-amber-200/50 blur-3xl" />
+      <section className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
+        <div className="absolute -right-10 top-10 h-36 w-36 rounded-full bg-orange-500/10 blur-3xl" />
         <div className="absolute bottom-0 right-0 h-24 w-48 rounded-tl-[100px] bg-slate-900/5" />
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Master Data Management</p>
-            <h1 className="mt-3 text-4xl font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+            <h1 className="mt-3 text-4xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
               Shape the production backbone.
             </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
               This workspace keeps your core planning records in sync with the safety logic already enforced in the backend: active-first customer views, guarded machine deactivation, and required operation routes for parts.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <div className="rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700">Tenant: {auth?.tenant_id || 'Loading'}</div>
+            <div className="rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-semibold text-slate-300">Tenant: {auth?.tenant_id || 'Loading'}</div>
             <div className="rounded-full border border-white/70 bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Role: {auth?.user_role || 'Unknown'}</div>
           </div>
         </div>
       </section>
 
       {!canDeleteMasterData ? (
-        <section className="rounded-[24px] border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+        <section className="rounded-[24px] border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
           Master Data is currently in view-only mode for the {normalizedRole || 'current'} role. Destructive actions like delete stay hidden.
         </section>
       ) : null}

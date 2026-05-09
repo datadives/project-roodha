@@ -1,3 +1,13 @@
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: AccessControl.test.jsx
+ * 
+ * 1) Purpose: Frontend core logic.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
 import '@testing-library/jest-dom/vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'

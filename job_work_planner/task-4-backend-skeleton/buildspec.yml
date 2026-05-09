@@ -1,0 +1,46 @@
+version: 0.2
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Project Roodha v1.5.7 — CodeBuild Buildspec
+# Account : 918172959197 | Region: ap-south-1
+# Goal    : Build Docker image → Push to ECR roodha-backend-v15:latest
+# ─────────────────────────────────────────────────────────────────────────────
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: "ap-south-1"
+    AWS_ACCOUNT_ID:     "918172959197"
+    ECR_REPO_NAME:      "roodha-backend-v15"
+    IMAGE_TAG:          "latest"
+
+phases:
+  pre_build:
+    commands:
+      - echo "=== PRE-BUILD: Authenticating Docker to ECR ==="
+      - REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+      - echo "Target image → ${REPO_URI}:${IMAGE_TAG}"
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION
+          | docker login --username AWS --password-stdin
+            ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+      - echo "ECR login successful"
+
+  build:
+    commands:
+      - echo "=== BUILD: docker build ==="
+      - docker build -t ${ECR_REPO_NAME} .
+      - echo "Image built successfully"
+      - docker tag ${ECR_REPO_NAME}:latest ${REPO_URI}:${IMAGE_TAG}
+      - echo "Tagged → ${REPO_URI}:${IMAGE_TAG}"
+
+  post_build:
+    commands:
+      - echo "=== POST-BUILD: Pushing image to ECR ==="
+      - docker push ${REPO_URI}:${IMAGE_TAG}
+      - echo "Push complete → ${REPO_URI}:${IMAGE_TAG}"
+      - echo "BUILD_COMPLETE" > /tmp/build_status.txt
+      - printf '{"imageUri":"%s:%s"}' "${REPO_URI}" "${IMAGE_TAG}" > imageDetail.json
+      - cat imageDetail.json
+
+artifacts:
+  files:
+    - imageDetail.json

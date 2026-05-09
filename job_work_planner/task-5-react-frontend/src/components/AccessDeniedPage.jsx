@@ -1,3 +1,13 @@
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: AccessDeniedPage.jsx
+ * 
+ * 1) Purpose: React component for rendering AccessDeniedPage UI elements.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
 import { Link } from 'react-router-dom'
 
 export default function AccessDeniedPage({

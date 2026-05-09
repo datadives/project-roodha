@@ -1,3 +1,13 @@
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: jobOperationsApi.js
+ * 
+ * 1) Purpose: Utility library or API client for jobOperationsApi.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
 import api from './api'
 
 export async function updateJobOperationStatus(jobOperationId, payload) {
