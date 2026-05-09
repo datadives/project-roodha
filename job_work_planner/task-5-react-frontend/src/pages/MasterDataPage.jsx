@@ -211,9 +211,19 @@ export default function MasterDataPage() {
   const canSubmitCustomer = Boolean(customerForm.name.trim()) && savingKey !== 'customer'
   const canSubmitMachine = Boolean(machineForm.name.trim()) && Boolean(machineForm.type.trim()) && savingKey !== 'machine'
   const canSubmitPart =
-    Boolean(partForm.part_number.trim()) &&
+    Boolean(partForm.part_number?.trim()) &&
     Boolean(partForm.customer_id) &&
-    asArray(partForm.steps).every((step) => step.trim()) &&
+    asArray(partForm.steps).every((step) => {
+      // Safely handle strings, objects, or undefined
+      if (!step) return false;
+      if (typeof step === 'string') return Boolean(step.trim());
+      if (typeof step === 'object') {
+        // If your form uses objects like { value: 'Cutting' }
+        const text = step.name || step.value || step.operation_name || '';
+        return Boolean(text.trim());
+      }
+      return true;
+    }) &&
     savingKey !== 'part'
   const canSubmitShift = Boolean(shiftForm.name.trim()) && Boolean(shiftForm.start_time) && Boolean(shiftForm.end_time) && savingKey !== 'shift'
   const canSubmitWorker = Boolean(workerForm.name.trim()) && Boolean(workerForm.role.trim()) && savingKey !== 'worker'
