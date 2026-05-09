@@ -93,6 +93,25 @@ function validateSignUpInput({ identity, password, organizationName }) {
   return ''
 }
 
+function validateIdentityAndPassword({ identity, password }) {
+  if (!identity.trim()) {
+    return 'Email or mobile is required.'
+  }
+
+  if (!password) {
+    return 'Password is required.'
+  }
+
+  return ''
+}
+
+function validateOtp(value, label = 'OTP') {
+  const code = String(value || '').trim()
+  if (!code) return `${label} is required.`
+  if (!/^\d{6}$/.test(code)) return `${label} must be a 6 digit code.`
+  return ''
+}
+
 function ErrorBanner({ error }) {
   if (!error) return null
 
@@ -257,6 +276,15 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     setNotice('')
 
     try {
+      const validationError = validateIdentityAndPassword({ identity, password })
+      if (validationError) {
+        throw {
+          code: 'ValidationError',
+          name: 'ValidationError',
+          message: validationError,
+        }
+      }
+
       const result = await cognitoLogin(identity, password)
 
       if (result?.nextStep?.signInStep === 'CONFIRM_SIGN_UP') {
@@ -389,6 +417,15 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     setNotice('')
 
     try {
+      const otpError = validateOtp(confirmationCode, 'Email OTP')
+      if (otpError) {
+        throw {
+          code: 'ValidationError',
+          name: 'ValidationError',
+          message: otpError,
+        }
+      }
+
       await confirmCognitoSignUp({
         username: identity.trim(),
         confirmationCode: confirmationCode.trim(),
@@ -439,6 +476,14 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     setNotice('')
 
     try {
+      if (!identity.trim()) {
+        throw {
+          code: 'ValidationError',
+          name: 'ValidationError',
+          message: 'Email or mobile is required to request recovery.',
+        }
+      }
+
       await requestCognitoPasswordReset({ username: identity.trim() })
       setNotice('Recovery code requested. Enter the OTP and your new password below.')
       toast.success('RECOVERY CODE SENT')
@@ -465,6 +510,22 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     setNotice('')
 
     try {
+      const otpError = validateOtp(recoveryCode, 'Recovery OTP')
+      if (otpError) {
+        throw {
+          code: 'ValidationError',
+          name: 'ValidationError',
+          message: otpError,
+        }
+      }
+      if (newPassword.length < 8) {
+        throw {
+          code: 'ValidationError',
+          name: 'ValidationError',
+          message: 'New password must be at least 8 characters.',
+        }
+      }
+
       await confirmCognitoResetPassword({
         username: identity.trim(),
         confirmationCode: recoveryCode.trim(),
@@ -566,7 +627,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
           )}
 
           {view === AUTH_VIEWS.LOGIN && (
-            <form className="space-y-5" onSubmit={handleLoginSubmit} autoComplete="off">
+            <form className="space-y-5" onSubmit={handleLoginSubmit} autoComplete="off" noValidate>
               <div>
                 <label className={labelStyle} htmlFor="identity">
                   Email or Mobile
@@ -612,7 +673,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
           {view === AUTH_VIEWS.CREATE_ACCOUNT && (
             <>
               {signUpStep === 'FORM' && (
-                <form className="space-y-5" onSubmit={handleSignUpSubmit} autoComplete="off">
+                <form className="space-y-5" onSubmit={handleSignUpSubmit} autoComplete="off" noValidate>
                   <div>
                     <label className={labelStyle} htmlFor="organization-name">
                       Organization Name
@@ -674,7 +735,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
               )}
 
               {signUpStep === 'VERIFY_OTP' && (
-                <form className="space-y-5" onSubmit={handleConfirmSignUpSubmit} autoComplete="off">
+                <form className="space-y-5" onSubmit={handleConfirmSignUpSubmit} autoComplete="off" noValidate>
                   <div className="border-2 border-slate-700 bg-slate-950 p-4">
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
                       Verification Target
@@ -731,7 +792,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
           {view === AUTH_VIEWS.FORGOT_PASSWORD && (
             <>
               {recoveryStep === 'REQUEST_CODE' && (
-                <form className="space-y-5" onSubmit={handleForgotPasswordSubmit} autoComplete="off">
+                <form className="space-y-5" onSubmit={handleForgotPasswordSubmit} autoComplete="off" noValidate>
                   <div>
                     <label className={labelStyle} htmlFor="recovery-identity">
                       Email or Mobile
@@ -757,7 +818,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
               )}
 
               {recoveryStep === 'RESET_PASSWORD' && (
-                <form className="space-y-5" onSubmit={handleConfirmResetPasswordSubmit} autoComplete="off">
+                <form className="space-y-5" onSubmit={handleConfirmResetPasswordSubmit} autoComplete="off" noValidate>
                   <div className="border-2 border-slate-700 bg-slate-950 p-4">
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
                       Recovery Target
