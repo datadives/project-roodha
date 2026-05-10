@@ -213,14 +213,13 @@ export default function MasterDataPage() {
   const canSubmitPart =
     Boolean(partForm.part_number?.trim()) &&
     Boolean(partForm.customer_id) &&
+    asArray(partForm.steps).length > 0 && // Ensures at least one step exists
     asArray(partForm.steps).every((step) => {
-      // Safely handle strings, objects, or undefined
       if (!step) return false;
       if (typeof step === 'string') return Boolean(step.trim());
       if (typeof step === 'object') {
-        // If your form uses objects like { value: 'Cutting' }
-        const text = step.name || step.value || step.operation_name || '';
-        return Boolean(text.trim());
+        // This universally checks EVERY property in the object for text
+        return Object.values(step).some(val => typeof val === 'string' && val.trim() !== '');
       }
       return true;
     }) &&

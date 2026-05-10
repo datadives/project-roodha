@@ -80,7 +80,6 @@ async def create_job(
     tenant_id_context.set(tenant_id)
     user_id_context.set(user_id)
 
-    # 2. Transactional Integrity
     async with db.begin():
         # Fetch Part to get route
         part_query = select(models.Part).where(
@@ -105,11 +104,13 @@ async def create_job(
         )
         db.add(job)
 
-        # 4. Route Copy Logic (Part JSONB -> JobOperations)
-        # Converts a generic 'Part Route' into a tracked 'Job Routing' with unique IDs.
+        # --- FIX: Handle None/empty operations route safely ---
         ops_route = part.default_operations_route or []
         job_operations = []
         
+        if not ops_route:
+            logger.warning(f"Part {part.part_id} has no default operations route. No job operations will be created.")
+
         for idx, op_data in enumerate(ops_route):
             op_id_raw = op_data.get("id")
             if not op_id_raw:

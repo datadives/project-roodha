@@ -203,8 +203,8 @@ export default function JobsPage() {
 
     try {
       const response = await createJob({
-        customer_id: jobForm.customer_id,
-        part_id: jobForm.part_id,
+        customer_id: jobForm.customer_id, // UUID string
+        part_id: jobForm.part_id,         // UUID string
         quantity: Number(jobForm.quantity),
         due_date: jobForm.due_date,
         priority: jobForm.priority,
