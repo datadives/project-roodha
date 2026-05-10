@@ -4,10 +4,36 @@ venv/
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+ 
+# Database
+*.db
+*.sqlite3
  
 # Environment variables
 .env
+.env.*
  
 # OS files
 .DS_Store
 Thumbs.db
+ 
+# Alembic migration cache
+alembic/versions/*.pyc
+ 
+# VSCode
+.vscode/
+ 
+# Docker
+*.pid
+ 
+# Test
+htmlcov/
+.coverage
+.tox/
+ 
+# Misc
+*.bak
+*.swp
+*.tmp
