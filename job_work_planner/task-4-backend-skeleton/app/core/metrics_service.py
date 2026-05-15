@@ -78,27 +78,34 @@ async def get_wip_metrics_service(db: AsyncSession, tenant_id: str, from_date: s
     Uses AsyncSession and select() for SA 2.0.
     """
     # Fetch active operations directly from AWS
-    stmt = select(models.JobOperation).where(
-        models.JobOperation.tenant_id == tenant_id,
-        models.JobOperation.status.in_([
-            models.OperationStatus.NOT_STARTED, # READY is NOT_STARTED in models.py enum
-            models.OperationStatus.IN_PROGRESS
-        ])
+    stmt = (
+        select(models.JobOperation, models.OperationsMaster.name)
+        .join(
+            models.OperationsMaster,
+            (models.JobOperation.op_id == models.OperationsMaster.operation_id)
+            & (models.OperationsMaster.tenant_id == tenant_id),
+            isouter=True,
+        )
+        .where(
+            models.JobOperation.tenant_id == tenant_id,
+            models.JobOperation.status.in_([
+                models.OperationStatus.NOT_STARTED, # READY is NOT_STARTED in models.py enum
+                models.OperationStatus.IN_PROGRESS
+            ])
+        )
     )
     result = await db.execute(stmt)
-    active_ops = result.scalars().all()
 
     wip_counts = defaultdict(int)
 
-    for op in active_ops:
+    for op, operation_name in result.all():
         # Date filtering logic
         if op.planned_start_date:
             start_iso = op.planned_start_date.date().isoformat()
             if from_date and start_iso < from_date: continue
             if to_date and start_iso > to_date: continue
 
-        # Ensure op_id (UUID) is stringified for JSON safety in counts
-        stage_key = str(op.op_id)
+        stage_key = operation_name or str(op.op_id)
         wip_counts[stage_key] += 1
 
     return [{"stage": stage, "count": count} for stage, count in wip_counts.items()]

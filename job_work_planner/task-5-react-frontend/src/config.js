@@ -19,13 +19,11 @@ function requireEnv(name) {
 }
 
 export const BASE_URL = requireEnv('VITE_API_BASE_URL').replace(/\/+$/, '')
-export const REGION = env.VITE_AWS_REGION || 'us-east-1'
-export const USER_POOL_ID = env.VITE_COGNITO_USER_POOL_ID || 'us-east-1_971juKyUp'
-export const CLIENT_ID =
-  env.VITE_COGNITO_CLIENT_ID ||
-  env.VITE_COGNITO_USER_POOL_CLIENT_ID ||
-  '6i2gbi9ttmv034ebau874s4cd0'
+export const REGION = requireEnv('VITE_COGNITO_REGION')
+export const USER_POOL_ID = requireEnv('VITE_COGNITO_USER_POOL_ID')
+export const CLIENT_ID = requireEnv('VITE_COGNITO_CLIENT_ID')
 export const IS_DEV = env.MODE === 'development'
+const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
 
 /**
  * Primary environment-switching hub for Project Roodha v1.5.
@@ -42,12 +40,11 @@ export const CONFIG = {
   IS_DEV,
   MODE: env.MODE,
   API_TIMEOUT_MS: Number(env.VITE_API_TIMEOUT_MS || 30000),
-  COGNITO_DOMAIN: env.VITE_COGNITO_DOMAIN || 'roodha.auth.us-east-1.amazoncognito.com',
-  REDIRECT_URL:
-    env.VITE_S3_WEBSITE_URL ||
-    'http://roodhaprodbucketstackv1-roodhaprodbucketv1709e8cd5-eyi4xpi7ilog.s3-website.ap-south-1.amazonaws.com',
-  ALLOW_DEV_PASS: env.VITE_ALLOW_DEV_PASS === 'true',
+  COGNITO_DOMAIN: env.VITE_COGNITO_DOMAIN || '',
+  REDIRECT_URL: env.VITE_S3_WEBSITE_URL || browserOrigin,
+  ALLOW_DEV_PASS: IS_DEV && env.VITE_ALLOW_DEV_PASS === 'true',
   DEBUG_AUTH: env.VITE_DEBUG_AUTH === 'true',
+  ENABLE_SELF_SIGNUP: env.VITE_ENABLE_SELF_SIGNUP === 'true',
   DEV_BYPASS_TOKEN: env.VITE_DEV_BYPASS_TOKEN || '',
   DEV_PASS_TOKEN: env.VITE_DEV_PASS_TOKEN || '',
   DEV_TENANT_ID: env.VITE_DEV_TENANT_ID || 'tenant-missing',

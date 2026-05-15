@@ -187,10 +187,9 @@ async def get_machine_load_service(db: AsyncSession, tenant_id: str) -> List[Dic
         machine_names[m_id] = m_name
 
         # Calculate Hours
-        safe_cycle_time = cycle_time if cycle_time and cycle_time > 0 else 1.0  # fallback to 1 minute
-        hours = (qty * safe_cycle_time) / 60.0
+        hours = ((qty or 0) * cycle_time) / 60.0 if cycle_time and cycle_time > 0 else 0.1
         if not cycle_time or cycle_time <= 0:
-            logger.warning(f"Missing/Zero cycle time for Op: {op.job_op_id}. Falling back to 1 minute per unit.")
+            logger.warning(f"Missing/Zero cycle time for Op: {op.job_op_id}. Falling back to 0.1 hours.")
             estimation_map[m_id][op_date] = True
         load_map[m_id][op_date] += hours
 

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
-import { getAuthContext, getCachedAuthContextSync, logout as libLogout } from '../lib/auth'
+import { getAuthContext, getCachedAuthContextSync, getStoredDevAuthContext, logout as libLogout } from '../lib/auth'
 
 const AuthContext = createContext({
   auth: null,
@@ -44,7 +44,8 @@ export function AuthProvider({ children }) {
   const initializeAuth = useCallback(async () => {
     const initEpoch = authEpochRef.current
     try {
-      const context = await getAuthContext({ forceFresh: true })
+      const devContext = getStoredDevAuthContext()
+      const context = devContext || await getAuthContext({ forceFresh: true })
       if (authEpochRef.current === initEpoch) {
         setAuth(normalizeContext(context))
       }

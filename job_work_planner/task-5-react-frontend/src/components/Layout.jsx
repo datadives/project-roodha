@@ -8,7 +8,7 @@
  *    and responsive data visualization critical for shop-floor dashboards.
  */
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useOutletContext } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchNotifications } from '../lib/notificationsApi'

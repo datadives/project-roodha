@@ -6,7 +6,7 @@
  * and password recovery.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
@@ -17,6 +17,7 @@ import Loader2 from 'lucide-react/dist/esm/icons/loader-2.js'
 import LockKeyhole from 'lucide-react/dist/esm/icons/lock-keyhole.js'
 import MailCheck from 'lucide-react/dist/esm/icons/mail-check.js'
 import ShieldCheck from 'lucide-react/dist/esm/icons/shield-check.js'
+import { CONFIG } from '../config'
 import { useAuth } from '../context/AuthContext'
 import {
   confirmSignUp as confirmCognitoSignUp,
@@ -27,6 +28,7 @@ import {
   resendSignUpCode as resendCognitoSignUpCode,
   resetPassword as requestCognitoPasswordReset,
   signUp as cognitoSignUp,
+  storeDevBypassSession,
 } from '../lib/auth'
 import { authenticatedFetch } from '../lib/authenticatedFetch'
 
@@ -38,14 +40,25 @@ const AUTH_VIEWS = {
 
 const AUTH_VIEW_LABELS = {
   [AUTH_VIEWS.LOGIN]: 'Login',
-  [AUTH_VIEWS.CREATE_ACCOUNT]: 'Create',
-  [AUTH_VIEWS.FORGOT_PASSWORD]: 'Recover',
+  [AUTH_VIEWS.CREATE_ACCOUNT]: 'New',
+  [AUTH_VIEWS.FORGOT_PASSWORD]: 'Reset',
 }
 
 const DASHBOARD_PATH = '/dashboard'
 const ENABLE_GOOGLE_OAUTH = import.meta.env.VITE_ENABLE_GOOGLE_OAUTH === 'true'
+const ENABLE_SELF_SIGNUP = CONFIG.ENABLE_SELF_SIGNUP
+const OTP_RESEND_COOLDOWN_SECONDS = 60
 
-function getInitialView(initialMode) {
+function normalizeAuthIdentity(value) {
+  const identity = String(value || '').trim()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity) ? identity.toLowerCase() : identity
+}
+
+export function getInitialView(initialMode) {
+  if (!ENABLE_SELF_SIGNUP) {
+    return AUTH_VIEWS.LOGIN
+  }
+
   if (initialMode === AUTH_VIEWS.CREATE_ACCOUNT || initialMode === 'CREATE_ACCOUNT' || initialMode === 'SIGN_UP') {
     return AUTH_VIEWS.CREATE_ACCOUNT
   }
@@ -68,6 +81,27 @@ function getErrorDisplay(error) {
       message:
         error.message ||
         'This Cognito app client is rejecting the request. For account creation, self-service sign-up may still be disabled in AWS.',
+    }
+  }
+
+  if (error?.code === 'LimitExceededException' || error?.code === 'TooManyRequestsException') {
+    return {
+      code: error.code,
+      message: 'Too many attempts. Please wait a minute before trying again.',
+    }
+  }
+
+  if (error?.code === 'ExpiredCodeException') {
+    return {
+      code: error.code,
+      message: 'That code has expired. Request a fresh code and try again.',
+    }
+  }
+
+  if (error?.code === 'NewPasswordRequiredException') {
+    return {
+      code: error.code,
+      message: error.message || 'This invite needs a new password. If it expired, ask the Owner to resend it.',
     }
   }
 
@@ -155,6 +189,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState('')
+  const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0)
   const navigate = useNavigate()
   const isConfirmMode = initialMode === 'CONFIRM_SIGN_UP'
 
@@ -173,11 +208,19 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     }
   }, [initialMode, isConfirmMode])
 
+  useEffect(() => {
+    if (otpCooldownSeconds <= 0) return undefined
+    const timer = window.setTimeout(() => {
+      setOtpCooldownSeconds((seconds) => Math.max(0, seconds - 1))
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [otpCooldownSeconds])
+
   const copy = useMemo(() => {
-    if (view === AUTH_VIEWS.CREATE_ACCOUNT) {
+    if (ENABLE_SELF_SIGNUP && view === AUTH_VIEWS.CREATE_ACCOUNT) {
       return {
         title: 'Create Workspace',
-        subtitle: 'Provision a secure tenant owner identity for the production control plane.',
+        subtitle: 'Create the first owner for this factory workspace.',
         icon: Factory,
       }
     }
@@ -185,14 +228,14 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     if (view === AUTH_VIEWS.FORGOT_PASSWORD) {
       return {
         title: 'Recover Access',
-        subtitle: 'Request a Cognito recovery code for the operator identity.',
+        subtitle: 'Get a recovery code by email.',
         icon: MailCheck,
       }
     }
 
     return {
       title: 'Secure Login',
-      subtitle: 'Authenticate against the Roodha production control plane.',
+      subtitle: 'Sign in to your factory workspace.',
       icon: LockKeyhole,
     }
   }, [view])
@@ -200,6 +243,13 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
   const ModeIcon = copy.icon
 
   const switchView = (nextView) => {
+    if (!ENABLE_SELF_SIGNUP && nextView === AUTH_VIEWS.CREATE_ACCOUNT) {
+      setView(AUTH_VIEWS.LOGIN)
+      setError(null)
+      setNotice('Self-service account creation is disabled for this deployment. Sign in with an existing owner or operator account.')
+      return
+    }
+
     setView(nextView)
     setError(null)
     setNotice('')
@@ -211,6 +261,22 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
       setRecoveryStep('REQUEST_CODE')
       setRecoveryCode('')
       setNewPassword('')
+    }
+  }
+
+  const openSignupView = (notice) => {
+    if (!ENABLE_SELF_SIGNUP) {
+      setView(AUTH_VIEWS.LOGIN)
+      setSignUpStep('FORM')
+      setError(null)
+      setNotice(notice || 'Self-service account creation is disabled for this deployment. Sign in with an existing account.')
+      return
+    }
+
+    setView(AUTH_VIEWS.CREATE_ACCOUNT)
+    setSignUpStep('VERIFY_OTP')
+    if (notice) {
+      setNotice(notice)
     }
   }
 
@@ -269,6 +335,25 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     }
   }
 
+  const handleDevPass = () => {
+    const devUser = {
+      userId: 'dev-user-id',
+      user_id: 'dev-user-id',
+      email: 'dev@example.com',
+      tenant_id: CONFIG.DEV_TENANT_ID || 'lalafactory',
+      tenantId: CONFIG.DEV_TENANT_ID || 'lalafactory',
+      user_role: 'OWNER',
+      userRole: 'OWNER',
+      role: 'OWNER',
+    }
+    const authContext = storeDevBypassSession(devUser)
+    flushSync(() => {
+      setGlobalAuth(authContext)
+    })
+    toast.success('DEMO ACCESS READY')
+    navigate(DASHBOARD_PATH, { replace: true })
+  }
+
   const handleLoginSubmit = async (event) => {
     event.preventDefault()
     setIsLoading(true)
@@ -285,7 +370,8 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
         }
       }
 
-      const result = await cognitoLogin(identity, password)
+      const normalizedIdentity = normalizeAuthIdentity(identity)
+      const result = await cognitoLogin(normalizedIdentity, password)
 
       if (result?.nextStep?.signInStep === 'CONFIRM_SIGN_UP') {
         throw {
@@ -295,11 +381,17 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
         }
       }
 
-      if (result?.nextStep?.signInStep === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED') {
+      const signInStep = result?.nextStep?.signInStep
+      if (
+        signInStep === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED' ||
+        signInStep === 'NEW_PASSWORD_REQUIRED' ||
+        signInStep === 'FORCE_CHANGE_PASSWORD'
+      ) {
+        console.warn('[Cognito] Login blocked by password challenge:', signInStep, result?.nextStep)
         throw {
-          code: 'PasswordResetRequiredException',
-          name: 'PasswordResetRequiredException',
-          message: 'Password reset required. Use password recovery to continue.',
+          code: 'NewPasswordRequiredException',
+          name: 'NewPasswordRequiredException',
+          message: 'This invite requires a new password. If the invite is older than 7 days, ask the Owner to resend it.',
         }
       }
 
@@ -337,9 +429,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
         })
         navigate(DASHBOARD_PATH, { replace: true })
       } else if (authError?.code === 'UserNotConfirmedException') {
-        setView(AUTH_VIEWS.CREATE_ACCOUNT)
-        setSignUpStep('VERIFY_OTP')
-        setNotice('This account exists but is not verified yet. Enter the email OTP if you have it, or use Resend OTP below.')
+        openSignupView('This account exists but is not verified yet. Enter the email OTP if you have it, or use Resend OTP below.')
       } else {
         handleAuthError(authError)
       }
@@ -366,17 +456,18 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
 
       const result = await cognitoSignUp({
         organizationName,
-        email: identity.trim(),
+        email: normalizeAuthIdentity(identity),
         password,
       })
 
       const deliveryDetails = result?.nextStep?.codeDeliveryDetails
-      const deliveryDestination = deliveryDetails?.destination || identity.trim()
+      const deliveryDestination = deliveryDetails?.destination || normalizeAuthIdentity(identity)
       const deliveryMedium = deliveryDetails?.deliveryMedium || 'EMAIL'
 
       if (result?.nextStep?.signUpStep === 'CONFIRM_SIGN_UP') {
-        setNotice(`OTP requested through Cognito ${deliveryMedium.toLowerCase()} delivery to ${deliveryDestination}. If you do not receive it, use Resend OTP and verify AWS Cognito email delivery settings.`)
+        setNotice(`OTP requested through Cognito ${deliveryMedium.toLowerCase()} delivery to ${deliveryDestination}. If it does not arrive, use Resend OTP, check spam, then verify the Cognito email sender in AWS SES.`)
         toast.success('OTP REQUESTED')
+        setOtpCooldownSeconds(OTP_RESEND_COOLDOWN_SECONDS)
         setSignUpStep('VERIFY_OTP')
         return
       }
@@ -387,11 +478,12 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     } catch (authError) {
       if (authError?.code === 'UsernameExistsException' || authError?.name === 'UsernameExistsException') {
         try {
-          const result = await resendCognitoSignUpCode({ username: identity.trim() })
+          const result = await resendCognitoSignUpCode({ username: normalizeAuthIdentity(identity) })
           const deliveryDetails = result?.codeDeliveryDetails
-          const deliveryDestination = deliveryDetails?.destination || identity.trim()
+          const deliveryDestination = deliveryDetails?.destination || normalizeAuthIdentity(identity)
           const deliveryMedium = deliveryDetails?.deliveryMedium || 'EMAIL'
-          setNotice(`Account already exists but is not fully verified yet. A fresh OTP was requested through Cognito ${deliveryMedium.toLowerCase()} delivery to ${deliveryDestination}.`)
+          setNotice(`Account already exists but is not fully verified yet. A fresh OTP was requested through Cognito ${deliveryMedium.toLowerCase()} delivery to ${deliveryDestination}. If it still does not arrive, fix Cognito email delivery in AWS SES or admin-confirm this test user.`)
+          setOtpCooldownSeconds(OTP_RESEND_COOLDOWN_SECONDS)
           setSignUpStep('VERIFY_OTP')
         } catch (resendError) {
           if (resendError?.code === 'NotAuthorizedException') {
@@ -427,7 +519,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
       }
 
       await confirmCognitoSignUp({
-        username: identity.trim(),
+        username: normalizeAuthIdentity(identity),
         confirmationCode: confirmationCode.trim(),
       })
       toast.success('ACCOUNT VERIFIED')
@@ -438,6 +530,20 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
       setPassword('')
       setView(AUTH_VIEWS.LOGIN)
     } catch (authError) {
+      const rawMessage = String(authError?.rawMessage || authError?.originalError?.message || authError?.message || '')
+      const alreadyConfirmed =
+        authError?.code === 'NotAuthorizedException' &&
+        /current status is confirmed|already confirmed|user is already confirmed/i.test(rawMessage)
+
+      if (alreadyConfirmed) {
+        toast.success('ACCOUNT ALREADY VERIFIED')
+        setNotice('This account is already confirmed. Please sign in with your email and password.')
+        setSignUpStep('FORM')
+        setConfirmationCode('')
+        setView(AUTH_VIEWS.LOGIN)
+        return
+      }
+
       if (authError?.code === 'NotAuthorizedException') {
         setNotice('Cognito refused OTP verification for this account right now. This usually means the account state or email delivery flow in AWS is inconsistent. Try Resend OTP first.')
       }
@@ -448,17 +554,23 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
   }
 
   const handleResendOtp = async () => {
+    if (otpCooldownSeconds > 0) {
+      setNotice(`Please wait ${otpCooldownSeconds}s before requesting another OTP.`)
+      return
+    }
+
     setIsLoading(true)
     setError(null)
     setNotice('')
 
     try {
-      const result = await resendCognitoSignUpCode({ username: identity.trim() })
+      const result = await resendCognitoSignUpCode({ username: normalizeAuthIdentity(identity) })
       const deliveryDetails = result?.codeDeliveryDetails
-      const deliveryDestination = deliveryDetails?.destination || identity.trim()
+      const deliveryDestination = deliveryDetails?.destination || normalizeAuthIdentity(identity)
       const deliveryMedium = deliveryDetails?.deliveryMedium || 'EMAIL'
-      setNotice(`A fresh OTP was requested through Cognito ${deliveryMedium.toLowerCase()} delivery to ${deliveryDestination}.`)
+      setNotice(`A fresh OTP was requested through Cognito ${deliveryMedium.toLowerCase()} delivery to ${deliveryDestination}. If it still does not arrive, the AWS Cognito/SES sender needs to be verified or the test user must be admin-confirmed.`)
       toast.success('OTP SENT')
+      setOtpCooldownSeconds(OTP_RESEND_COOLDOWN_SECONDS)
     } catch (authError) {
       if (authError?.code === 'NotAuthorizedException') {
         setNotice('Cognito did not allow OTP resend for this account. If no OTP ever arrived, the AWS Cognito email delivery setup likely needs attention.')
@@ -476,7 +588,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     setNotice('')
 
     try {
-      if (!identity.trim()) {
+      if (!normalizeAuthIdentity(identity)) {
         throw {
           code: 'ValidationError',
           name: 'ValidationError',
@@ -484,7 +596,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
         }
       }
 
-      await requestCognitoPasswordReset({ username: identity.trim() })
+      await requestCognitoPasswordReset({ username: normalizeAuthIdentity(identity) })
       setNotice('Recovery code requested. Enter the OTP and your new password below.')
       toast.success('RECOVERY CODE SENT')
       setRecoveryStep('RESET_PASSWORD')
@@ -493,9 +605,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
         authError?.code === 'InvalidParameterException' ||
         authError?.code === 'UserNotConfirmedException'
       ) {
-        setView(AUTH_VIEWS.CREATE_ACCOUNT)
-        setSignUpStep('VERIFY_OTP')
-        setNotice('This account is not confirmed yet. Verify the email OTP first, or use Resend OTP from the Create screen.')
+        openSignupView('This account is not confirmed yet. Verify the email OTP first, or use the recovery flow from the Login screen.')
       }
       handleAuthError(authError)
     } finally {
@@ -527,7 +637,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
       }
 
       await confirmCognitoResetPassword({
-        username: identity.trim(),
+        username: normalizeAuthIdentity(identity),
         confirmationCode: recoveryCode.trim(),
         newPassword,
       })
@@ -554,6 +664,10 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
     'min-h-[46px] w-full border-2 border-slate-700 bg-slate-950 px-4 text-sm font-black uppercase tracking-normal text-slate-100 transition hover:border-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60'
   const tabStyle =
     'min-h-[40px] min-w-0 border border-slate-700 px-2 text-xs font-black uppercase tracking-normal transition disabled:cursor-not-allowed disabled:opacity-60'
+  const visibleViews = ENABLE_SELF_SIGNUP
+    ? Object.values(AUTH_VIEWS)
+    : [AUTH_VIEWS.LOGIN, AUTH_VIEWS.FORGOT_PASSWORD]
+  const tabCols = ENABLE_SELF_SIGNUP ? 'grid-cols-3' : 'grid-cols-2'
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-orange-500 selection:text-slate-950">
@@ -578,8 +692,8 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
             </div>
           </div>
 
-          <div className="mb-6 grid grid-cols-3 gap-2 rounded-sm bg-slate-950/70 p-1">
-            {Object.values(AUTH_VIEWS).map((mode) => (
+          <div className={`mb-6 grid ${tabCols} gap-2 rounded-sm bg-slate-950/70 p-1`}>
+            {visibleViews.map((mode) => (
               <button
                 key={mode}
                 type="button"
@@ -639,6 +753,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
                   type="text"
                   value={identity}
                   onChange={(event) => setIdentity(event.target.value)}
+                  onBlur={() => setIdentity((current) => normalizeAuthIdentity(current))}
                   placeholder="EMAIL_OR_MOBILE"
                   autoComplete="off"
                   disabled={isLoading}
@@ -667,10 +782,21 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
               <button type="submit" className={primaryButtonStyle} disabled={isLoading}>
                 {isLoading ? <LoadingLabel>Validating</LoadingLabel> : 'Establish Session'}
               </button>
+
+              {CONFIG.ALLOW_DEV_PASS && (
+                <button
+                  type="button"
+                  className={secondaryButtonStyle}
+                  disabled={isLoading}
+                  onClick={handleDevPass}
+                >
+                  Demo Access
+                </button>
+              )}
             </form>
           )}
 
-          {view === AUTH_VIEWS.CREATE_ACCOUNT && (
+          {ENABLE_SELF_SIGNUP && view === AUTH_VIEWS.CREATE_ACCOUNT && (
             <>
               {signUpStep === 'FORM' && (
                 <form className="space-y-5" onSubmit={handleSignUpSubmit} autoComplete="off" noValidate>
@@ -703,6 +829,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
                       type="email"
                       value={identity}
                       onChange={(event) => setIdentity(event.target.value)}
+                      onBlur={() => setIdentity((current) => normalizeAuthIdentity(current))}
                       placeholder="OWNER@COMPANY.COM"
                       autoComplete="off"
                       disabled={isLoading}
@@ -770,10 +897,10 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
                   <button
                     type="button"
                     className={secondaryButtonStyle}
-                    disabled={isLoading}
+                    disabled={isLoading || otpCooldownSeconds > 0}
                     onClick={handleResendOtp}
                   >
-                    Resend OTP
+                    {otpCooldownSeconds > 0 ? `Resend OTP in ${otpCooldownSeconds}s` : 'Resend OTP'}
                   </button>
 
                   <button
@@ -804,6 +931,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
                       type="text"
                       value={identity}
                       onChange={(event) => setIdentity(event.target.value)}
+                      onBlur={() => setIdentity((current) => normalizeAuthIdentity(current))}
                       placeholder="EMAIL_OR_MOBILE"
                       autoComplete="off"
                       disabled={isLoading}

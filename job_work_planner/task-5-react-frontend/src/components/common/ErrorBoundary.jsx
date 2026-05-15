@@ -43,6 +43,16 @@ export class ErrorBoundary extends React.Component {
     // In production: forward to Sentry / CloudWatch here
   }
 
+  componentDidUpdate(prevProps) {
+    if (
+      this.state.hasError &&
+      this.props.resetKey !== undefined &&
+      this.props.resetKey !== prevProps.resetKey
+    ) {
+      this._handleReset()
+    }
+  }
+
   _handleReload() {
     window.location.reload()
   }
@@ -145,6 +155,8 @@ export class ErrorBoundary extends React.Component {
     }
 
     // ── Inline widget mode (isolates individual dashboard sections) ─────────
+    const moduleName = this.props.moduleName || this.props.label || 'Section'
+
     return (
       <div
         role="alert"
@@ -156,14 +168,13 @@ export class ErrorBoundary extends React.Component {
           </div>
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-orange-300">
-              Section Offline
+              {moduleName} Offline
             </p>
             <h3 className="mt-1 text-base font-semibold text-white">
-              This module is temporarily unavailable
+              This area paused
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-300">
-              A background task failed. The rest of the dashboard remains
-              functional. Try resetting this section or reload the page.
+              Reset this area or reload the workspace.
             </p>
           </div>
         </div>

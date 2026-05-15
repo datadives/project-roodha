@@ -8,7 +8,7 @@
  *    and responsive data visualization critical for shop-floor dashboards.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { fetchNotifications, markNotificationRead } from '../lib/notificationsApi'
 

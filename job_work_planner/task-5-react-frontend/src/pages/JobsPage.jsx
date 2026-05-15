@@ -8,7 +8,7 @@
  *    and responsive data visualization critical for shop-floor dashboards.
  */
 
-import { startTransition, useEffect, useMemo, useState } from 'react'
+import React, { startTransition, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import AuditTrailPanel from '../components/AuditTrailPanel'
@@ -58,6 +58,21 @@ function routeLabels(route = []) {
     label: step.operation || step.operation_name || step.name || step.operation_id || `Step ${index + 1}`,
     sequence: step.sequence || index + 1,
   }))
+}
+
+function normalizeCreatedJobResponse(response) {
+  if (response?.job) {
+    return {
+      ...response,
+      operations: Array.isArray(response.operations) ? response.operations : [],
+    }
+  }
+
+  return {
+    job: response || {},
+    operations: Array.isArray(response?.operations) ? response.operations : [],
+    costing: response?.costing || null,
+  }
 }
 
 function operationStatusClass(status) {
@@ -202,18 +217,18 @@ export default function JobsPage() {
     setSubmitting(true)
 
     try {
-      const response = await createJob({
+      const response = normalizeCreatedJobResponse(await createJob({
         customer_id: jobForm.customer_id, // UUID string
         part_id: jobForm.part_id,         // UUID string
         quantity: Number(jobForm.quantity),
         due_date: jobForm.due_date,
         priority: jobForm.priority,
-      })
+      }))
 
       setCreatedJob(response)
       setJobAuditEntries([])
       setJobAuditOpen(false)
-      toast.success(`Job ${response.job.job_number} created. Opening the dashboard...`)
+      toast.success(`Job ${response.job?.job_number || response.job?.jobNumber || 'created'} created. Opening the dashboard...`)
       setJobForm((current) => emptyJobForm(current.customer_id, current.part_id))
       navigate('/')
     } catch {
@@ -434,7 +449,7 @@ export default function JobsPage() {
                 <div className="mt-6 overflow-x-auto">
                   <div className="flex min-w-max items-center gap-3">
                     {routeTimeline?.map((step, index) => (
-                      <div key={`${step.operation || step.name || 'step'}-${index}`} className="flex items-center gap-3">
+                      <div key={step.key} className="flex items-center gap-3">
                         <div className="rounded-[24px] border border-slate-700 bg-slate-900 px-4 py-3 shadow-sm">
                           <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-orange-400 font-mono">Step {step.sequence}</div>
                           <div className="mt-1 text-sm font-semibold text-white uppercase tracking-tight">{step.label}</div>
@@ -537,19 +552,34 @@ export default function JobsPage() {
                     <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white font-mono">{createdJob.operations.length} steps</span>
                   </div>
                   <div className="space-y-3">
-                    {createdJob?.operations?.map((operation) => (
-                      <div key={operation.job_operation_id} className="rounded-[22px] border border-slate-800 bg-slate-950 p-4">
+                    {createdJob?.operations?.map((operation, index) => {
+                      const operationId =
+                        operation.job_operation_id ||
+                        operation.job_op_id ||
+                        operation.jobOperationId ||
+                        `operation-${index}`
+                      const operationLabel =
+                        operation.operation_id ||
+                        operation.op_id ||
+                        operation.operationName ||
+                        operation.operation_name ||
+                        operation.opId ||
+                        'Routing step'
+                      const sequenceNumber = operation.sequence_number || operation.sequenceNumber || index + 1
+
+                      return (
+                      <div key={operationId} className="rounded-[22px] border border-slate-800 bg-slate-950 p-4">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <p className="text-sm font-semibold text-white">
-                              Step <span className="font-mono">{operation.sequence_number}</span>: <span className="font-mono">{operation.operation_id}</span>
+                              Step <span className="font-mono">{sequenceNumber}</span>: <span className="font-mono">{operationLabel}</span>
                             </p>
-                            <p className="text-xs text-slate-500 font-mono">{operation.job_operation_id}</p>
+                            <p className="text-xs text-slate-500 font-mono">{operationId}</p>
                           </div>
                           <span className={`rounded-full px-3 py-1 text-xs font-semibold ${operationStatusClass(operation.status)}`}>{operation.status}</span>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 </div>
 

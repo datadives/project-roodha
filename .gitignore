@@ -18,6 +18,16 @@ cdk.out/
 cdk.out*/
 .codex-tmp/
 .autopilot_tmp/
+aws-*.json
+eb-*.json
+eb-*.log
+eb-*.txt
+task-*-eb-tail*.txt
+jwks.json
+update-env.json
+production.env
+preview.*.log
+pytest-cache-files-*/
 
 # Local databases and archives
 *.db

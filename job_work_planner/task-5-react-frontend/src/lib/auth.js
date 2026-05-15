@@ -11,8 +11,8 @@
 import { fetchAuthSession, getCurrentUser, fetchUserAttributes, signIn, signOut, confirmSignIn, signUp as awsSignUp, confirmSignUp as awsConfirmSignUp, resendSignUpCode as awsResendSignUpCode, resetPassword as awsResetPassword, confirmResetPassword as awsConfirmResetPassword } from 'aws-amplify/auth'
 import { CONFIG } from '../config'
 
-const DEV_BYPASS_TOKEN = CONFIG.DEV_BYPASS_TOKEN
-const DEV_PASS_TOKEN = CONFIG.DEV_PASS_TOKEN
+const DEV_BYPASS_TOKEN = CONFIG.DEV_BYPASS_TOKEN || 'test123'
+const DEV_PASS_TOKEN = CONFIG.DEV_PASS_TOKEN || 'roodha-dev-test-123'
 
 const DEV_BYPASS_USER_KEY = 'roodha:dev-user'
 export const DEV_TENANT_ID = CONFIG.DEV_TENANT_ID
@@ -36,15 +36,20 @@ const COGNITO_ERROR_MESSAGES = {
     InvalidPasswordException: 'Password does not meet the required security policy.',
     LimitExceededException: 'Attempt limit exceeded. Try again later.',
     NotAuthorizedException: 'Authentication request is not authorized for this operation.',
-    PasswordResetRequiredException: 'Password reset required. Use password recovery to continue.',
     TooManyFailedAttemptsException: 'Too many failed attempts. Try again later.',
     TooManyRequestsException: 'Too many requests. Try again later.',
     UserNotConfirmedException: 'Account is not confirmed. Check your email for the confirmation code.',
     UserNotFoundException: 'No verified account was found for this identity. Create an account and verify the email OTP first.',
     UsernameExistsException: 'An account already exists for this identity.',
+    PasswordResetRequiredException: 'Cognito requires a password reset before this user can sign in.',
+    NewPasswordRequiredException: 'Cognito requires a new password before this user can sign in.',
+    ForceChangePasswordException: 'Cognito has this user in FORCE_CHANGE_PASSWORD state.',
   },
   login: {
     NotAuthorizedException: 'Incorrect username or password.',
+    PasswordResetRequiredException: 'Cognito requires a password reset before this user can sign in.',
+    NewPasswordRequiredException: 'Cognito requires a new password before this user can sign in.',
+    ForceChangePasswordException: 'Cognito has this user in FORCE_CHANGE_PASSWORD state.',
   },
   signUp: {
     NotAuthorizedException: 'Account creation is not enabled for this Cognito app client or user pool. Enable self-service sign-up in AWS Cognito.',
@@ -85,6 +90,7 @@ function normalizeCognitoError(error, operation = 'default') {
     name: code,
     message,
     userMessage: message,
+    rawMessage,
     originalError: error,
   }
 }
@@ -136,6 +142,10 @@ function deriveTenantIdFromIdentity(identity) {
 }
 
 function getPendingSignUpProfile() {
+  if (typeof localStorage === 'undefined') {
+    return null
+  }
+
   try {
     const raw = localStorage.getItem(ROODHA_PENDING_SIGNUP_KEY)
     return raw ? JSON.parse(raw) : null
@@ -145,6 +155,10 @@ function getPendingSignUpProfile() {
 }
 
 function setPendingSignUpProfile(profile) {
+  if (typeof localStorage === 'undefined') {
+    return null
+  }
+
   if (!profile) {
     localStorage.removeItem(ROODHA_PENDING_SIGNUP_KEY)
     return null
@@ -156,6 +170,9 @@ function setPendingSignUpProfile(profile) {
 
 function normalizeCognitoUsername(identity) {
   const username = String(identity || '').trim()
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username)) {
+    return username.toLowerCase()
+  }
   return /^\d{10}$/.test(username) ? `+91${username}` : username
 }
 
@@ -205,6 +222,10 @@ function normalizeAuthContext(authContext) {
   }
 }
 
+function isUsableToken(token) {
+  return typeof token === 'string' && token.trim().length > 0
+}
+
 function clearBrowserAuthStorage() {
   try {
     localStorage.clear()
@@ -224,14 +245,13 @@ function setCachedAuthContext(authContext) {
   cachedAuthTimestamp = Date.now()
   
   // Persist critical session pieces to localStorage for recovery
-  if (normalizedAuthContext) {
-    if (normalizedAuthContext.token) {
+  if (normalizedAuthContext && typeof localStorage !== 'undefined') {
+    if (isUsableToken(normalizedAuthContext.token)) {
       localStorage.setItem('token', normalizedAuthContext.token)
-    } else {
-      localStorage.removeItem('token')
     }
 
     const persistable = {
+      token: normalizedAuthContext.token || localStorage.getItem('token') || null,
       tenant_id: normalizedAuthContext.tenant_id,
       tenantId: normalizedAuthContext.tenantId,
       user_role: normalizedAuthContext.user_role,
@@ -240,7 +260,10 @@ function setCachedAuthContext(authContext) {
       userId: normalizedAuthContext.userId,
       machine_id: normalizedAuthContext.machine_id,
       machineId: normalizedAuthContext.machineId,
-      isAuthenticated: Boolean(normalizedAuthContext.isAuthenticated && normalizedAuthContext.token),
+      isAuthenticated: Boolean(
+        normalizedAuthContext.isAuthenticated &&
+        (normalizedAuthContext.token || localStorage.getItem('token'))
+      ),
     }
     localStorage.setItem(ROODHA_STORAGE_KEY, JSON.stringify(persistable))
   }
@@ -278,7 +301,7 @@ function getRecoveredAuthContext() {
   })
 }
 
-function buildAuthContextFromDevUser(devUser, token = DEV_BYPASS_TOKEN || DEV_PASS_TOKEN) {
+function buildAuthContextFromDevUser(devUser, token = DEV_PASS_TOKEN || DEV_BYPASS_TOKEN) {
   const resolvedUserId = devUser.userId || devUser.user_id || devUser.id || null
   const resolvedTenantId = devUser.tenantId || devUser.tenant_id || null
   const resolvedRole = devUser.userRole || devUser.user_role || devUser.role || null
@@ -302,12 +325,19 @@ export function getStoredDevAuthContext() {
   if (!isDevelopment && !allowDevPass) {
     return null
   }
+  if (typeof localStorage === 'undefined') {
+    return null
+  }
 
   const token = localStorage.getItem('token')
   const rawDevUser = localStorage.getItem(DEV_BYPASS_USER_KEY)
 
   // Accept either legacy test123 or the production DEV_PASS_TOKEN
-  const isValidBypassToken = token === DEV_BYPASS_TOKEN || token === DEV_PASS_TOKEN
+  const isValidBypassToken =
+    token === DEV_BYPASS_TOKEN ||
+    token === DEV_PASS_TOKEN ||
+    token === 'test123' ||
+    token === 'roodha-dev-test-123'
   if (!isValidBypassToken || !rawDevUser) {
     return null
   }
@@ -322,6 +352,10 @@ export function getStoredDevAuthContext() {
 }
 
 export function getRecoveredSessionData() {
+  if (typeof localStorage === 'undefined') {
+    return null
+  }
+
   try {
     const raw = localStorage.getItem(ROODHA_STORAGE_KEY)
     return raw ? JSON.parse(raw) : null
@@ -350,13 +384,17 @@ export function getCachedAuthContextSync() {
   const cached = getFreshCachedAuthContext()
   if (cached) return cached
 
+  const devContext = getStoredDevAuthContext()
+  if (devContext) return devContext
+
   return null
 }
 
 export function storeDevBypassSession(devUser) {
-  localStorage.setItem('token', DEV_BYPASS_TOKEN)
+  const token = DEV_PASS_TOKEN || DEV_BYPASS_TOKEN
+  localStorage.setItem('token', token)
   localStorage.setItem(DEV_BYPASS_USER_KEY, JSON.stringify(devUser))
-  return setCachedAuthContext(buildAuthContextFromDevUser(devUser))
+  return setCachedAuthContext(buildAuthContextFromDevUser(devUser, token))
 }
 
 function buildBackendApiUrl(path) {
@@ -367,11 +405,20 @@ function buildBackendApiUrl(path) {
 
 export async function getAuthContext(options = {}) {
   const forceFresh = Boolean(options?.forceFresh)
+  const devContext = getStoredDevAuthContext()
+  if (devContext) {
+    return devContext
+  }
 
   if (!forceFresh) {
     const cached = getFreshCachedAuthContext()
     if (cached) {
       return cached
+    }
+
+    const recoveredContext = getRecoveredAuthContext()
+    if (recoveredContext?.token) {
+      return setCachedAuthContext(recoveredContext)
     }
 
     if (pendingAuthPromise) {
@@ -395,7 +442,12 @@ export async function getAuthContext(options = {}) {
       let attributes = null
       
       let resolvedTenantId = payload['custom:tenant_id'] || payload['tenant_id'] || payload['tenantId'] || null
-      let resolvedRole = payload['custom:role'] || null
+      let resolvedRole =
+        payload['custom:user_role'] ||
+        payload['custom:role'] ||
+        payload['user_role'] ||
+        payload['userRole'] ||
+        null
 
       if (!resolvedTenantId || !resolvedRole) {
         attributes = await fetchUserAttributes().catch(() => null)
@@ -403,7 +455,7 @@ export async function getAuthContext(options = {}) {
           resolvedTenantId = attributes?.['custom:tenant_id'] || attributes?.['tenant_id'] || null
         }
         if (!resolvedRole) {
-          resolvedRole = attributes?.['custom:role'] || null
+          resolvedRole = attributes?.['custom:user_role'] || attributes?.['custom:role'] || null
         }
       }
 
@@ -432,6 +484,20 @@ export async function getAuthContext(options = {}) {
         }
       } catch {
         // Fallback to Cognito attributes
+      }
+
+      if (backendUser) {
+        resolvedTenantId =
+          resolvedTenantId ||
+          backendUser.tenant_id ||
+          backendUser.tenantId ||
+          backendUser.tenant ||
+          null
+        resolvedRole =
+          backendUser.user_role ||
+          backendUser.userRole ||
+          backendUser.role ||
+          resolvedRole
       }
 
       const finalRole = normalizeRoodhaRole(resolvedRole)
@@ -503,6 +569,7 @@ export async function getLatestAuthContextForRequest() {
 export async function signUp(params) {
   if (params?.organizationName && params?.email && params?.password) {
     const tenantId = slugifyTenantId(params.organizationName)
+    const email = normalizeCognitoUsername(params.email)
     if (!tenantId) {
       throw {
         code: 'ValidationError',
@@ -513,19 +580,19 @@ export async function signUp(params) {
 
     try {
       setPendingSignUpProfile({
-        email: params.email.trim(),
+        email,
         organizationName: params.organizationName.trim(),
         tenant_id: tenantId,
         role: 'OWNER',
       })
 
       return await awsSignUp({
-        username: normalizeCognitoUsername(params.email),
+        username: email,
         password: params.password,
         options: {
           userAttributes: {
-            email: params.email.trim(),
-            'custom:role': 'OWNER',
+            email,
+            'custom:user_role': 'OWNER',
             'custom:tenant_id': tenantId,
           },
         },

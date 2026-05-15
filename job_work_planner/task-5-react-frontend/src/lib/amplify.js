@@ -11,22 +11,27 @@
 import { Amplify } from 'aws-amplify'
 import { CLIENT_ID, CONFIG, REGION, USER_POOL_ID } from '../config'
 
+const loginWith = {
+  email: true,
+}
+
+if (CONFIG.COGNITO_DOMAIN) {
+  loginWith.oauth = {
+    domain: CONFIG.COGNITO_DOMAIN,
+    scopes: ['email', 'openid', 'profile', 'aws.cognito.signin.user.admin'],
+    redirectSignIn: [CONFIG.REDIRECT_URL],
+    redirectSignOut: [CONFIG.REDIRECT_URL],
+    responseType: 'code',
+  }
+}
+
 export const amplifyConfig = {
   Auth: {
     Cognito: {
       userPoolId: USER_POOL_ID,
       userPoolClientId: CLIENT_ID,
       authenticationFlowType: 'USER_PASSWORD_AUTH',
-      loginWith: {
-        email: true,
-        oauth: {
-          domain: CONFIG.COGNITO_DOMAIN,
-          scopes: ['email', 'openid', 'profile', 'aws.cognito.signin.user.admin'],
-          redirectSignIn: [CONFIG.REDIRECT_URL],
-          redirectSignOut: [CONFIG.REDIRECT_URL],
-          responseType: 'code'
-        }
-      },
+      loginWith,
       region: REGION,
     },
   },

@@ -8,7 +8,7 @@
  *    and responsive data visualization critical for shop-floor dashboards.
  */
 
-import { startTransition, useEffect, useMemo, useState, useCallback } from 'react'
+import React, { startTransition, useEffect, useMemo, useState, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
 import { DEV_TENANT_ID, getAuthContext } from '../lib/auth'
 import { normalizeRole } from '../lib/roles'
@@ -1055,10 +1055,10 @@ export default function MasterDataPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Master Data Management</p>
             <h1 className="mt-3 text-4xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
-              Shape the production backbone.
+              Factory master data
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
-              This workspace keeps your core planning records in sync with the safety logic already enforced in the backend: active-first customer views, guarded machine deactivation, and required operation routes for parts.
+              Manage customers, parts, machines, shifts, workers, and operation routes.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

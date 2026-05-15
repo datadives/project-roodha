@@ -110,7 +110,11 @@ async def update_job_operation_status_async(
         raise ValueError("Operation not found")
 
     before_state = _serialize_job_operation(operation)
+    if not new_status:
+        raise ValueError("Operation status is required")
     normalized_status = new_status.strip().upper()
+    if normalized_status not in ALLOWED_OPERATION_STATUSES:
+        raise ValueError(f"Invalid operation status: {normalized_status}")
     
     # 1. Update Basic Fields
     operation.status = normalized_status
@@ -121,18 +125,18 @@ async def update_job_operation_status_async(
     
     # 2.1 Sequence Integrity (Requirement 3.C)
     # Prevent COMPLETING an operation if previous operations are not COMPLETED
-    if normalized_status == "COMPLETED":
+    if normalized_status in {"IN_PROGRESS", "COMPLETED"}:
         sequence_query = select(models.JobOperation).where(
             models.JobOperation.job_id == operation.job_id,
             models.JobOperation.tenant_id == tenant_id,
             models.JobOperation.sequence_number < operation.sequence_number,
             models.JobOperation.status != "COMPLETED"
-        )
+        ).with_for_update()
         sequence_result = await db.execute(sequence_query)
         uncompleted_previous = sequence_result.scalars().all()
         if uncompleted_previous:
             prev_seqs = [op.sequence_number for op in uncompleted_previous]
-            raise ValueError(f"Sequence Integrity Violation: Cannot complete operation #{operation.sequence_number} while previous operations ({prev_seqs}) are incomplete.")
+            raise ValueError(f"Sequence Integrity Violation: Cannot move operation #{operation.sequence_number} to {normalized_status} while previous operations ({prev_seqs}) are incomplete.")
 
     # 2.2 Exclusivity (Requirement 3.C)
     if normalized_status == "IN_PROGRESS":

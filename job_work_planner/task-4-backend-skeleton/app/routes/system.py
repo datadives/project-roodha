@@ -14,8 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_middleware import require_roles
 from app.core.proactive_delay_guard import evaluate_tenant_delays
-from app.database import get_async_db
-from app.database import fetch_db_runtime_snapshot
+from app.database import fetch_db_runtime_snapshot, get_async_db
 from app.routes.response_utils import api_success
 
 router = APIRouter(tags=["System"])
@@ -27,13 +26,24 @@ def health_check():
 
 
 @router.get("/ready")
-def readiness_check():
+async def readiness_check():
+    snapshot = await fetch_db_runtime_snapshot()
+    missing_tables = [
+        table_name
+        for table_name, row_count in snapshot.get("table_counts", {}).items()
+        if row_count == "missing"
+    ]
+    status_value = "ready" if not missing_tables else "degraded"
     return api_success(
         {
-            "status": "ready",
-            "dependencies": {"database": "not_checked", "s3": "not_checked"},
+            "status": status_value,
+            "dependencies": {
+                "database": "ok" if not missing_tables else "missing_tables",
+                "missing_tables": missing_tables,
+            },
+            "database": snapshot,
         },
-        message="Readiness check passed",
+        message="Readiness check passed" if not missing_tables else "Readiness check degraded",
     )
 
 

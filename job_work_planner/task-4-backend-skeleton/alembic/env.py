@@ -17,7 +17,15 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", SQLALCHEMY_DATABASE_URL)
+def _sync_migration_url(url: str) -> str:
+    if url.startswith("postgresql+asyncpg://"):
+        return url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url
+
+
+config.set_main_option("sqlalchemy.url", _sync_migration_url(SQLALCHEMY_DATABASE_URL))
 
 # Use the application's declarative metadata for autogenerate support.
 target_metadata = Base.metadata

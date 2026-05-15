@@ -4,7 +4,7 @@
  * PURPOSE: OWNER/SUPERVISOR machine capacity visualization.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { authenticatedFetch } from '../../lib/authenticatedFetch'
 
 const SHIFT_CAPACITY = 10
@@ -107,12 +107,12 @@ export default function MachineLoadRadar() {
 
           return (
             <article
-              key={machine.machineId || machine.machineName}
-              className={`rounded-[24px] border p-5 shadow-inner transition ${
-                overloaded
-                  ? 'border-red-500/60 bg-red-950/20 shadow-red-950/20'
-                  : 'border-slate-800 bg-slate-950/50'
-              }`}
+                key={machine.machineId || machine.machineName}
+                className={`rounded-[24px] border p-5 shadow-inner transition ${
+                  overloaded
+                    ? 'animate-pulse border-red-500/60 bg-red-950/20 shadow-red-950/20'
+                    : 'border-slate-800 bg-slate-950/50'
+                }`}
             >
               <div className="mb-4 flex items-start justify-between gap-4">
                 <div className="min-w-0">

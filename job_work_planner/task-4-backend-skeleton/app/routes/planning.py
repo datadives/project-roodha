@@ -12,7 +12,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from sqlalchemy import cast, Float, func, select
+from sqlalchemy import case, cast, Float, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models
@@ -32,7 +32,7 @@ def select_capacity_machine(machines, load_by_machine: dict[str, float]):
     available_machines = [
         machine
         for machine in machines
-        if float(load_by_machine.get(str(machine.machine_id), 0.0)) <= MACHINE_DAILY_CAPACITY_HOURS
+        if float(load_by_machine.get(str(machine.machine_id), 0.0)) < MACHINE_DAILY_CAPACITY_HOURS
     ]
     if not available_machines:
         return None
@@ -86,12 +86,11 @@ async def get_machine_load(
     """
     tenant_id = user["tenant_id"]
     try:
-        booked_hours = func.coalesce(
-            func.sum(
-                (cast(models.Job.quantity, Float) * cast(models.OperationsMaster.standard_cycle_time_mins, Float)) / 60.0
-            ),
-            0.0,
+        operation_hours = case(
+            (models.OperationsMaster.standard_cycle_time_mins <= 0, 0.1),
+            else_=(cast(models.Job.quantity, Float) * cast(models.OperationsMaster.standard_cycle_time_mins, Float)) / 60.0,
         )
+        booked_hours = func.coalesce(func.sum(operation_hours), 0.0)
         result = await db.execute(
             select(
                 models.Machine.machine_id,
@@ -180,8 +179,8 @@ async def auto_schedule(
 
     suggestions = []
     for operation, job, operation_master in result.all():
-        cycle_time = float(operation_master.standard_cycle_time_mins or 6)
-        estimated_hours = round((float(job.quantity or 1) * cycle_time) / 60.0, 2)
+        cycle_time = float(operation_master.standard_cycle_time_mins or 0)
+        estimated_hours = round((float(job.quantity or 1) * cycle_time) / 60.0, 2) if cycle_time > 0 else 0.1
         selected_machine = select_capacity_machine(machines, load_by_machine)
         if not selected_machine:
             logger.warning("AUTO_SCHEDULE | no available machine capacity for tenant=%s", tenant_id)

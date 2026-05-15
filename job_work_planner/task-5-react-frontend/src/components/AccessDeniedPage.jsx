@@ -8,6 +8,7 @@
  *    and responsive data visualization critical for shop-floor dashboards.
  */
 
+import React from 'react'
 import { Link } from 'react-router-dom'
 
 export default function AccessDeniedPage({

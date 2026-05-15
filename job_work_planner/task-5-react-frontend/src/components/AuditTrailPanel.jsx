@@ -8,6 +8,8 @@
  *    and responsive data visualization critical for shop-floor dashboards.
  */
 
+import React from 'react'
+
 function humanizeLabel(value) {
   if (!value) return 'Unknown'
 

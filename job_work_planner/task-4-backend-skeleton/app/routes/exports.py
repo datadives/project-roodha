@@ -19,8 +19,18 @@ from app.core.auth_middleware import require_roles
 
 router = APIRouter(prefix="/exports", tags=["Data Exports"])
 
+async def _export_jobs_response(user: dict, db: AsyncSession) -> ExportResponse:
+    tenant_id = user["tenant_id"]
+
+    try:
+        result = await generate_jobs_csv_and_upload(db, tenant_id)
+        return ExportResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
 @router.get("/jobs", response_model=ExportResponse)
-async def export_jobs(
+async def export_jobs_get(
     user: dict = Depends(require_roles(["OWNER"])),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -29,13 +39,16 @@ async def export_jobs(
     Generates the tenant job CSV, stores it in S3, and returns a short-lived
     pre-signed download URL.
     """
-    tenant_id = user["tenant_id"]
-    
-    try:
-        result = await generate_jobs_csv_and_upload(db, tenant_id)
-        return ExportResponse(**result)
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    return await _export_jobs_response(user, db)
+
+
+@router.post("/jobs", response_model=ExportResponse)
+async def export_jobs_post(
+    user: dict = Depends(require_roles(["OWNER"])),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """POST alias used by the dashboard and analytics export buttons."""
+    return await _export_jobs_response(user, db)
 
 
 @router.post("/machine-load", response_model=ExportResponse)

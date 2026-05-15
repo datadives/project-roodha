@@ -143,9 +143,15 @@ class PartUpdate(BaseModel):
         return _validate_route_steps(value)
 
 class PartResponse(PartBase):
+    default_operations_route: list[dict[str, Any]] = Field(default_factory=list)
     part_id: UUID
     tenant_id: str
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("default_operations_route", mode="before")
+    @classmethod
+    def default_empty_route_for_legacy_rows(cls, value):
+        return value or []
 
 
 class JobOperationResponse(BaseModel):
@@ -172,8 +178,8 @@ class JobOperationUpdate(BaseModel):
     worker_id: Optional[UUID] = None
     actual_start_time: Optional[datetime] = None
     actual_end_time: Optional[datetime] = None
-    quantity_completed: Optional[int] = None
-    quantity_rejected: Optional[int] = None
+    quantity_completed: Optional[int] = Field(default=None, ge=0)
+    quantity_rejected: Optional[int] = Field(default=None, ge=0)
 
 
 class JobCostSummaryResponse(BaseModel):

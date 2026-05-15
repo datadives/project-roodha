@@ -54,6 +54,8 @@ if ASYNC_DATABASE_URL.startswith("postgresql+asyncpg://"):
     rds_ssl_context.check_hostname = False
     rds_ssl_context.verify_mode = ssl.CERT_NONE
     engine_options["pool_timeout"] = 5
+    engine_options["pool_size"] = int(os.getenv("DB_POOL_SIZE", "5"))
+    engine_options["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "10"))
     engine_options["connect_args"] = {"timeout": 5, "ssl": rds_ssl_context}
 
 async_engine = create_async_engine(ASYNC_DATABASE_URL, **engine_options)
@@ -118,7 +120,7 @@ async def fetch_db_runtime_snapshot() -> dict[str, Any]:
         table_names = [item["table_name"] for item in tables_result.mappings().all()]
 
         table_counts = {}
-        for table_name in ("operations_master", "job_operations", "tenants"):
+        for table_name in ("tenants", "users", "customers", "parts", "operations_master", "machines", "jobs", "job_operations"):
             if table_name not in table_names:
                 table_counts[table_name] = "missing"
                 continue

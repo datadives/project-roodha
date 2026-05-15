@@ -15,7 +15,7 @@ Write-Host "=================================" -ForegroundColor Cyan
 
 Write-Host "`nSeeding Roodha demo story..." -ForegroundColor Yellow
 Push-Location $BackendPath
-python seed_test_data.py
+python scripts/seed_test_data.py
 Pop-Location
 
 Write-Host "Starting backend in a hidden window..." -ForegroundColor Green

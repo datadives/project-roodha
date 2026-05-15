@@ -8,7 +8,7 @@
  *    and responsive data visualization critical for shop-floor dashboards.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   fetchBottleneckMetrics,
   fetchCostingSummary,
@@ -37,6 +37,10 @@ const EMPTY_COSTING = {
   top_estimated_jobs: [],
 }
 
+function pick(value, snakeKey, camelKey = snakeKey) {
+  return value?.[snakeKey] ?? value?.[camelKey]
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value : []
 }
@@ -48,26 +52,64 @@ function asObject(value, fallback = {}) {
 function normalizeLateJobs(value) {
   const safe = asObject(value, EMPTY_LATE_JOBS)
   return {
-    total_late: Number(safe.total_late) || 0,
+    total_late: Number(pick(safe, 'total_late', 'totalLate')) || 0,
     jobs: asArray(safe.jobs),
   }
 }
 
 function normalizeCosting(value) {
   const safe = asObject(value, EMPTY_COSTING)
+  const overview = asObject(safe.overview, EMPTY_COSTING_OVERVIEW)
   return {
     overview: {
-      ...EMPTY_COSTING_OVERVIEW,
-      ...asObject(safe.overview, EMPTY_COSTING_OVERVIEW),
+      total_jobs: Number(pick(overview, 'total_jobs', 'totalJobs')) || 0,
+      active_jobs: Number(pick(overview, 'active_jobs', 'activeJobs')) || 0,
+      completed_jobs: Number(pick(overview, 'completed_jobs', 'completedJobs')) || 0,
+      late_jobs: Number(pick(overview, 'late_jobs', 'lateJobs')) || 0,
+      total_estimated_cost: Number(pick(overview, 'total_estimated_cost', 'totalEstimatedCost')) || 0,
+      open_estimated_cost: Number(pick(overview, 'open_estimated_cost', 'openEstimatedCost')) || 0,
+      completed_estimated_cost: Number(pick(overview, 'completed_estimated_cost', 'completedEstimatedCost')) || 0,
+      average_estimated_job_cost: Number(pick(overview, 'average_estimated_job_cost', 'averageEstimatedJobCost')) || 0,
+      highest_estimated_job_cost: Number(pick(overview, 'highest_estimated_job_cost', 'highestEstimatedJobCost')) || 0,
+      highest_estimated_job_number: pick(overview, 'highest_estimated_job_number', 'highestEstimatedJobNumber') || null,
     },
-    recent_completed_jobs: asArray(safe.recent_completed_jobs),
-    top_estimated_jobs: asArray(safe.top_estimated_jobs),
+    recent_completed_jobs: asArray(pick(safe, 'recent_completed_jobs', 'recentCompletedJobs')),
+    top_estimated_jobs: asArray(pick(safe, 'top_estimated_jobs', 'topEstimatedJobs')),
   }
 }
 
 function normalizeMetricCollection(value, key) {
   const safe = asObject(value)
-  return asArray(safe[key])
+  return asArray(safe[key] ?? safe[key.replace(/_([a-z])/g, (_match, char) => char.toUpperCase())])
+}
+
+function normalizeWipStage(stage) {
+  return {
+    stage: pick(stage, 'stage', 'stage') || pick(stage, 'stage_name', 'stageName') || 'Unknown',
+    count: Number(pick(stage, 'count', 'count')) || 0,
+  }
+}
+
+function normalizeBottleneck(machine) {
+  return {
+    machine_id: pick(machine, 'machine_id', 'machineId') || '',
+    machine_name: pick(machine, 'machine_name', 'machineName') || 'Machine',
+    pending_operations: Number(pick(machine, 'pending_operations', 'pendingOperations')) || 0,
+  }
+}
+
+function normalizeEstimatedJob(job) {
+  return {
+    job_id: pick(job, 'job_id', 'jobId') || '',
+    job_number: pick(job, 'job_number', 'jobNumber') || 'Job',
+    customer_name: pick(job, 'customer_name', 'customerName') || 'Customer',
+    operation_count: Number(pick(job, 'operation_count', 'operationCount')) || 0,
+    quantity: Number(job?.quantity) || 0,
+    estimated_cost: Number(pick(job, 'estimated_cost', 'estimatedCost')) || 0,
+    status: job?.status || 'UNKNOWN',
+    due_date: pick(job, 'due_date', 'dueDate'),
+    completion_date: pick(job, 'completion_date', 'completionDate'),
+  }
 }
 
 function formatCurrency(value) {
@@ -124,12 +166,12 @@ function BarList({ items, emptyMessage, valueKey = 'count', labelKey = 'stage' }
 
   return (
     <div className="space-y-4">
-      {safeItems.map((item) => {
+      {safeItems.map((item, index) => {
         const value = item?.[valueKey] || 0
         const width = Math.max((value / maxValue) * 100, value > 0 ? 10 : 0)
 
         return (
-          <div key={`${item?.[labelKey] || 'item'}-${value}`} className="space-y-3">
+          <div key={`${item?.[labelKey] || 'item'}-${value}-${index}`} className="space-y-3">
             <div className="flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
               <span className="truncate">{prettyLabel(item?.[labelKey])}</span>
               <span className="font-mono text-white text-xs">{value}</span>
@@ -171,13 +213,28 @@ export default function AnalyticsPage() {
         ])
 
         const failedRequests = [wip, bottlenecks, lateJobs, costing].filter((result) => result.status === 'rejected')
-        setAnalytics({
-          wip_by_stage: wip.status === 'fulfilled' ? normalizeMetricCollection(wip.value, 'wip_by_stage') : [],
-          bottlenecks:
-            bottlenecks.status === 'fulfilled' ? normalizeMetricCollection(bottlenecks.value, 'bottlenecks') : [],
-          late_jobs: lateJobs.status === 'fulfilled' ? normalizeLateJobs(lateJobs.value) : EMPTY_LATE_JOBS,
-          costing: costing.status === 'fulfilled' ? normalizeCosting(costing.value) : EMPTY_COSTING,
-        })
+          setAnalytics({
+            wip_by_stage:
+              wip.status === 'fulfilled'
+                ? normalizeMetricCollection(wip.value, 'wip_by_stage').map(normalizeWipStage)
+                : [],
+            bottlenecks:
+              bottlenecks.status === 'fulfilled'
+                ? normalizeMetricCollection(bottlenecks.value, 'bottlenecks').map(normalizeBottleneck)
+                : [],
+            late_jobs: lateJobs.status === 'fulfilled' ? normalizeLateJobs(lateJobs.value) : EMPTY_LATE_JOBS,
+            costing:
+              costing.status === 'fulfilled'
+                ? (() => {
+                    const normalizedCosting = normalizeCosting(costing.value)
+                    return {
+                      ...normalizedCosting,
+                      recent_completed_jobs: normalizedCosting.recent_completed_jobs.map(normalizeEstimatedJob),
+                      top_estimated_jobs: normalizedCosting.top_estimated_jobs.map(normalizeEstimatedJob),
+                    }
+                  })()
+                : EMPTY_COSTING,
+          })
         if (failedRequests.length > 0) {
           setError('Some analytics sources could not be loaded. Showing the data that is currently available.')
         }
@@ -255,10 +312,10 @@ export default function AnalyticsPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Version 1 Analytics</p>
             <h1 className="mt-3 text-4xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
-              Factory performance cockpit
+              Factory analytics
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
-              Review WIP pressure, machine bottlenecks, overdue work, and the current estimated value of the shopfloor without leaving the planner.
+              Track WIP, bottlenecks, late work, and estimated shopfloor value.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -396,8 +453,8 @@ export default function AnalyticsPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {lateJobs.jobs.length > 0 ? (
-                  lateJobs.jobs.map((job) => (
-                    <tr key={job.job_id} className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors">
+                  lateJobs.jobs.map((job, index) => (
+                    <tr key={`${job.job_id || job.job_number || 'late'}-${index}`} className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors">
                       <td className="py-4 pr-4">
                         <div className="font-black text-white uppercase tracking-tight font-mono">{job.job_number}</div>
                         <div className="mt-1 text-[10px] font-bold text-slate-500 font-mono italic">{job.customer_id}</div>
@@ -452,7 +509,7 @@ export default function AnalyticsPage() {
             <div className="mt-4 space-y-3">
               {costing.top_estimated_jobs.length > 0 ? (
                 costing.top_estimated_jobs.map((job, index) => (
-                  <div key={job.job_id} className="rounded-[22px] border border-slate-100 bg-slate-50 p-4">
+                  <div key={`${job.job_id || job.job_number || 'estimated'}-${index}`} className="rounded-[22px] border border-slate-100 bg-slate-50 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Top {index + 1}</div>
@@ -502,8 +559,8 @@ export default function AnalyticsPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {costing.recent_completed_jobs.length > 0 ? (
-                costing.recent_completed_jobs.map((job) => (
-                  <tr key={job.job_id}>
+                costing.recent_completed_jobs.map((job, index) => (
+                  <tr key={`${job.job_id || job.job_number || 'completed'}-${index}`}>
                     <td className="py-4 pr-4">
                       <div className="font-semibold text-slate-900 font-mono">{job.job_number}</div>
                       <div className="mt-1 text-xs text-slate-500 font-mono">{job.job_id}</div>

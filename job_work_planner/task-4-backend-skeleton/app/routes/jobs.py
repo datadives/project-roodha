@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from app import models
 from app.database import get_async_db
@@ -54,6 +54,106 @@ def _get_context(request: Request):
 
     return tenant_id, user_id, role
 
+
+async def _get_or_create_default_operation(db: AsyncSession, tenant_id: str) -> models.OperationsMaster:
+    """Ensure V1 jobs always have one routable operation for kanban and analytics."""
+    result = await db.execute(
+        select(models.OperationsMaster)
+        .where(models.OperationsMaster.tenant_id == tenant_id)
+        .order_by(
+            models.OperationsMaster.sequence_number.asc().nulls_last(),
+            models.OperationsMaster.name.asc(),
+        )
+        .limit(1)
+    )
+    operation = result.scalar_one_or_none()
+    if operation:
+        return operation
+
+    operation = models.OperationsMaster(
+        tenant_id=tenant_id,
+        name="General Operation",
+        description="Default V1 route created automatically so new jobs appear in planning and analytics.",
+        standard_cycle_time_mins=30,
+        sequence_number=1,
+    )
+    db.add(operation)
+    await db.flush()
+    return operation
+
+
+async def _get_default_machine_id(db: AsyncSession, tenant_id: str):
+    result = await db.execute(
+        select(models.Machine.machine_id)
+        .where(models.Machine.tenant_id == tenant_id, models.Machine.is_active.is_(True))
+        .order_by(models.Machine.name.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _route_operation_id(op_data: dict) -> str | None:
+    return op_data.get("operation_id") or op_data.get("op_id") or op_data.get("id")
+
+
+def _parse_uuid_or_none(value) -> UUID | None:
+    if not value:
+        return None
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_operation_key(value: str | None) -> str:
+    return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
+
+
+async def _resolve_route_operation(
+    db: AsyncSession,
+    tenant_id: str,
+    op_data: dict,
+    sequence_number: int,
+) -> models.OperationsMaster:
+    raw_id = _route_operation_id(op_data)
+    operation_uuid = _parse_uuid_or_none(raw_id)
+    if operation_uuid:
+        result = await db.execute(
+            select(models.OperationsMaster).where(
+                models.OperationsMaster.tenant_id == tenant_id,
+                models.OperationsMaster.operation_id == operation_uuid,
+            )
+        )
+        operation = result.scalar_one_or_none()
+        if operation:
+            return operation
+
+    operation_name = (
+        op_data.get("operation")
+        or op_data.get("operation_name")
+        or op_data.get("name")
+        or raw_id
+        or f"Operation {sequence_number}"
+    )
+    wanted_key = _normalize_operation_key(operation_name)
+    result = await db.execute(
+        select(models.OperationsMaster).where(models.OperationsMaster.tenant_id == tenant_id)
+    )
+    for operation in result.scalars().all():
+        if _normalize_operation_key(operation.name) == wanted_key:
+            return operation
+
+    operation = models.OperationsMaster(
+        tenant_id=tenant_id,
+        name=str(operation_name).strip() or f"Operation {sequence_number}",
+        description="Created from part route during job launch.",
+        standard_cycle_time_mins=30,
+        sequence_number=sequence_number,
+    )
+    db.add(operation)
+    await db.flush()
+    return operation
+
 # ---------------------------------------------------------
 # --- JOB LIFECYCLE ENDPOINTS ---
 # ---------------------------------------------------------
@@ -80,7 +180,7 @@ async def create_job(
     tenant_id_context.set(tenant_id)
     user_id_context.set(user_id)
 
-    async with db.begin():
+    try:
         # Fetch Part to get route
         part_query = select(models.Part).where(
             models.Part.part_id == payload.part_id,
@@ -97,36 +197,57 @@ async def create_job(
             tenant_id=tenant_id,
             customer_id=payload.customer_id,
             part_id=payload.part_id,
+            job_number=payload.job_number,
             quantity=payload.quantity,
             due_date=payload.due_date,
             priority=payload.priority,
             status=models.JobStatus.NOT_STARTED,
         )
         db.add(job)
+        await db.flush()
 
-        # --- FIX: Handle None/empty operations route safely ---
         ops_route = part.default_operations_route or []
         job_operations = []
         
         if not ops_route:
-            logger.warning(f"Part {part.part_id} has no default operations route. No job operations will be created.")
+            logger.warning(
+                "Part %s has no default operations route. Creating a V1 fallback operation for tenant %s.",
+                part.part_id,
+                tenant_id,
+            )
+            operation = await _get_or_create_default_operation(db, tenant_id)
+            machine_id = await _get_default_machine_id(db, tenant_id)
+            ops_route = [
+                {
+                    "operation_id": str(operation.operation_id),
+                    "sequence_number": 1,
+                    "machine_id": str(machine_id) if machine_id else None,
+                }
+            ]
 
         for idx, op_data in enumerate(ops_route):
-            op_id_raw = op_data.get("id")
-            if not op_id_raw:
-                continue
-                
+            sequence_number = op_data.get("sequence_number") or op_data.get("sequence") or idx + 1
+            operation = await _resolve_route_operation(db, tenant_id, op_data, sequence_number)
+                  
             job_op = models.JobOperation(
                 job_op_id=uuid4(),
                 tenant_id=tenant_id,
                 job_id=job.job_id,
-                op_id=UUID(op_id_raw),
-                sequence_number=op_data.get("sequence_number", idx + 1),
+                op_id=operation.operation_id,
+                sequence_number=sequence_number,
                 status=models.OperationStatus.NOT_STARTED,
-                machine_id=UUID(op_data["machine_id"]) if op_data.get("machine_id") else None,
+                machine_id=_parse_uuid_or_none(op_data.get("machine_id")),
             )
             db.add(job_op)
             job_operations.append(job_op)
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception:
+        await db.rollback()
+        logger.exception("Job creation failed for tenant %s", tenant_id)
+        raise
 
     await db.refresh(job)
     for op in job_operations:

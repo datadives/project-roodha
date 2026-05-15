@@ -5,7 +5,7 @@
  *          Implements Kanban stage management, proactive delay alerts, and financial costing summaries.
  */
 
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import AuditTrailPanel from '../components/AuditTrailPanel'
@@ -937,7 +937,6 @@ export default function DashboardPage({ auth: initialAuth = null }) {
   const userRole = auth?.userRole || auth?.user_role || null
   const normalizedUserRole = normalizeRole(userRole)
   const canViewMachineLoad = hasPermission(normalizedUserRole, 'machineLoad')
-  const canAutoSchedule = hasPermission(normalizedUserRole, 'autoSchedule')
   const canExportJobs = hasPermission(normalizedUserRole, 'exports')
   const canPlan = hasPermission(normalizedUserRole, 'plan')
   const dashboardErrors = useMemo(
@@ -1097,24 +1096,6 @@ export default function DashboardPage({ auth: initialAuth = null }) {
     }
   }, [canExportJobs])
 
-  const handleAutoSchedule = useCallback(async () => {
-    if (!canAutoSchedule) {
-      toast.error('Auto-scheduler is restricted to owners and supervisors.')
-      return
-    }
-
-    setActionLoading('auto-schedule')
-    try {
-      const result = await authenticatedFetch('planning/auto-assign', { method: 'POST' })
-      const count = result?.suggestions?.length || 0
-      toast.success(count > 0 ? `${count} schedule suggestions ready` : 'No unplanned jobs need scheduling')
-      await loadBoard()
-    } catch {
-      toast.error('Auto-scheduler failed')
-    } finally {
-      setActionLoading('')
-    }
-  }, [canAutoSchedule, loadBoard])
 
   const updateCurrentOperation = useCallback(async (status, actionKey, extraPayload = {}) => {
     const currentOp = getCurrentOperation(jobDetail?.operations || [])
@@ -1311,15 +1292,6 @@ export default function DashboardPage({ auth: initialAuth = null }) {
               </p>
             </div>
             <div className="flex flex-wrap gap-4">
-              {canAutoSchedule ? (
-                <button
-                  onClick={handleAutoSchedule}
-                  disabled={actionLoading === 'auto-schedule'}
-                  className="flex h-[48px] min-w-[200px] items-center justify-center rounded-2xl border border-orange-500/40 bg-orange-500/10 px-6 font-black uppercase tracking-widest text-orange-300 shadow-lg transition-all hover:bg-orange-500/20 active:scale-[0.98] disabled:opacity-50"
-                >
-                  {actionLoading === 'auto-schedule' ? 'SCANNING LOAD...' : 'Auto-Scheduler'}
-                </button>
-              ) : null}
               {canExportJobs ? (
                 <button
                   onClick={handleExport}

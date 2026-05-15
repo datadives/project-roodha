@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect, useState, Suspense } from 'react'
-import { Navigate, Outlet, Route, Routes, useOutletContext } from 'react-router-dom'
+import { Navigate, Outlet, Route, Routes, useLocation, useOutletContext } from 'react-router-dom'
 import AccessDeniedPage from './components/AccessDeniedPage'
 import Layout from './components/Layout'
 import DashboardPage from './pages/DashboardPage'
@@ -19,6 +19,7 @@ import AnalyticsPage from './pages/AnalyticsPage'
 import NotificationsPage from './pages/NotificationsPage'
 import UserManagement from './pages/UserManagement'
 import LoginPage from './pages/LoginPage'
+import { CONFIG } from './config'
 import { useAuth } from './context/AuthContext'
 import { getDefaultRouteForRole, hasAnyRole, listAllowedRoleLabels } from './lib/roles'
 import ErrorBoundary from './components/common/ErrorBoundary'
@@ -84,31 +85,22 @@ function HomeRoute() {
 }
 
 export default function App() {
-  const { isInitializing } = useAuth()
-
-  if (isInitializing) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0F172A]">
-        <div className="flex flex-col items-center">
-          <div className="relative flex h-12 w-12 items-center justify-center">
-            <div className="absolute h-full w-full animate-ping rounded-full bg-orange-500/20" />
-            <div className="h-4 w-4 animate-spin rounded-sm bg-orange-500" />
-          </div>
-          <div className="mt-8 text-[10px] font-black uppercase tracking-[0.4em] text-slate-500">
-            Verifying Secure Session
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const location = useLocation()
+  const allowSelfSignup = CONFIG.ENABLE_SELF_SIGNUP
 
   return (
-    <ErrorBoundary>
+    <ErrorBoundary resetKey={location.pathname}>
       <Suspense fallback={<div>Loading component...</div>}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<LoginPage initialMode="CREATE_ACCOUNT" />} />
-          <Route path="/register/confirm" element={<LoginPage initialMode="CONFIRM_SIGN_UP" />} />
+          <Route
+            path="/register"
+            element={allowSelfSignup ? <LoginPage initialMode="CREATE_ACCOUNT" /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/register/confirm"
+            element={allowSelfSignup ? <LoginPage initialMode="CONFIRM_SIGN_UP" /> : <Navigate to="/login" replace />}
+          />
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>
               <Route index element={<Navigate to="/dashboard" replace />} />

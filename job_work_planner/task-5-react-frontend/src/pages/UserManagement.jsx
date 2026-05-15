@@ -4,7 +4,7 @@
  * PURPOSE: OWNER-only employee invite console for Cognito-backed RBAC.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { authenticatedFetch } from '../lib/authenticatedFetch'
 import { fetchMachines } from '../lib/masterDataApi'
@@ -85,10 +85,10 @@ export default function UserManagement() {
             <p className="text-[10px] font-black uppercase tracking-[0.4em] text-orange-500">Owner Console</p>
           </div>
           <h1 className="text-5xl font-black uppercase tracking-tighter text-white sm:text-6xl">
-            User Management
+            Team Access
           </h1>
           <p className="mt-6 text-sm font-medium leading-relaxed text-slate-400">
-            Invite supervisors and operators into the active tenant with Cognito-backed role attributes.
+            Invite supervisors and operators with factory-ready Cognito roles.
           </p>
         </div>
       </section>
@@ -96,7 +96,7 @@ export default function UserManagement() {
       <section className="rounded-[30px] border border-slate-800 bg-slate-900/60 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)]">
         <div className="mb-6">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Employee Invite</p>
-          <h2 className="mt-2 text-3xl font-semibold text-white">Create Cognito User</h2>
+          <h2 className="mt-2 text-3xl font-semibold text-white">Invite Employee</h2>
         </div>
 
         <form className="space-y-5" onSubmit={handleSubmit}>

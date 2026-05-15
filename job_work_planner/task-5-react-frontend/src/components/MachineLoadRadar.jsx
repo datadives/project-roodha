@@ -8,7 +8,7 @@
  *    and responsive data visualization critical for shop-floor dashboards.
  */
 
-import { useMemo } from 'react'
+import React, { useMemo } from 'react'
 import MachineLoadGauge from './MachineLoadGauge'
 
 function asArray(value) {

@@ -11,7 +11,7 @@
 import axios from 'axios'
 import { toast } from 'react-hot-toast'
 import { fetchAuthSession } from 'aws-amplify/auth'
-import { getLatestAuthContextForRequest } from './auth'
+import { getLatestAuthContextForRequest, refreshAuthSession } from './auth'
 import { CONFIG } from '../config'
 
 const resolvedBaseUrl = CONFIG.BASE_URL
@@ -24,6 +24,9 @@ const api = axios.create({
 
 let lastErrorToastMessage = ''
 let lastErrorToastAt = 0
+let authRedirectInProgress = false
+const AUTH_REDIRECT_COOLDOWN_MS = 15000
+const AUTH_REDIRECT_AT_KEY = 'roodha_auth_redirect_at'
 
 function withTrailingSlash(url) {
   return url 
@@ -35,6 +38,34 @@ function isUsableToken(token) {
     token.trim() &&
     !['undefined', 'null'].includes(token.trim().toLowerCase())
   )
+}
+
+function decodeJwtPayload(token) {
+  if (!isUsableToken(token)) return {}
+  const parts = token.split('.')
+  if (parts.length < 2) return {}
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    const decoded = atob(padded)
+    return JSON.parse(decoded)
+  } catch {
+    return {}
+  }
+}
+
+function deriveTenantIdFromToken(token) {
+  const payload = decodeJwtPayload(token)
+  const claimTenant =
+    payload['custom:tenant_id'] ||
+    payload.tenant_id ||
+    payload.tenantId
+  if (claimTenant) return String(claimTenant)
+
+  const email = payload.email || payload['cognito:username'] || payload.username
+  if (!email || typeof email !== 'string') return ''
+  const seed = email.split('@', 1)[0] || ''
+  return seed.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
 }
 
 async function getRequestAuthContext() {
@@ -66,6 +97,29 @@ function showErrorToast(message) {
   toast.error(message)
 }
 
+function forceReauth() {
+  if (authRedirectInProgress) return
+
+  const now = Date.now()
+  const lastRedirectAt = Number(sessionStorage.getItem(AUTH_REDIRECT_AT_KEY) || 0)
+  if (lastRedirectAt && now - lastRedirectAt < AUTH_REDIRECT_COOLDOWN_MS) {
+    return
+  }
+
+  try {
+    localStorage.removeItem('token')
+    localStorage.removeItem('roodha_auth_context')
+  } catch {
+    // ignore storage errors
+  }
+
+  if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+    authRedirectInProgress = true
+    sessionStorage.setItem(AUTH_REDIRECT_AT_KEY, String(now))
+    window.location.replace('/login')
+  }
+}
+
 api.interceptors.request.use(async (config) => {
   config.url = withTrailingSlash(config.url)
   const auth = await getRequestAuthContext()
@@ -74,7 +128,7 @@ api.interceptors.request.use(async (config) => {
   if (isUsableToken(token)) {
     config.headers.Authorization = `Bearer ${token}`
   }
-  const tenantId = auth?.tenantId || auth?.tenant_id
+  const tenantId = auth?.tenantId || auth?.tenant_id || deriveTenantIdFromToken(token)
   if (tenantId) {
     config.headers['X-Tenant-ID'] = tenantId
   }
@@ -95,10 +149,10 @@ function describeErrorDetail(detail) {
 
 function describeRequestError(error) {
   if (error?.message === 'Network Error' || (!error?.response && !error?.code)) {
-    return 'Connection lost. Please check if the server is running.'
+    return 'Unable to connect to the server. Please try again.'
   }
   if (error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')) {
-    return 'Request timed out. Make sure the backend is running, DATABASE_URL is valid, and try again in a few seconds.'
+    return 'The request timed out. Please try again.'
   }
   return describeErrorDetail(error?.response?.data?.detail || error?.response?.data || error?.message)
 }
@@ -126,7 +180,35 @@ api.interceptors.response.use(
   },
   async (error) => {
     if (error?.response?.status === 401) {
-      showErrorToast('This request is not authorized for the current session.')
+      const requestConfig = error?.config || {}
+      const canRetry = !requestConfig._retriedAfterRefresh
+      if (canRetry) {
+        try {
+          await refreshAuthSession()
+          requestConfig._retriedAfterRefresh = true
+          return api.request(requestConfig)
+        } catch {
+          // fall through to user-facing unauthorized toast below
+        }
+      }
+      const detailMessage =
+        error?.response?.data?.detail ||
+        error?.response?.data?.message ||
+        'Session expired. Please sign in again.'
+      const detailText = typeof detailMessage === 'string' ? detailMessage : 'Session expired. Please sign in again.'
+      const isBackendDnsValidationIssue =
+        /security validation failed/i.test(detailText) &&
+        /name or service not known|temporary failure in name resolution|getaddrinfo/i.test(detailText)
+
+      showErrorToast(detailText)
+      if (!isBackendDnsValidationIssue) {
+        forceReauth()
+      }
+      return Promise.reject(error)
+    }
+    if (error?.response?.status === 403) {
+      showErrorToast('Your role or access changed. Please sign in again.')
+      forceReauth()
       return Promise.reject(error)
     }
     showErrorToast(describeRequestError(error))

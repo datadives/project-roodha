@@ -38,11 +38,10 @@ def _get_exports_bucket_name() -> str | None:
 def _upload_csv_to_s3(csv_content: str, tenant_id: str, filename: str) -> str:
     bucket_name = _get_exports_bucket_name()
     if not bucket_name:
-        if os.getenv("ALLOW_LOCAL_EXPORT_FALLBACK", "false").lower() == "true":
-            return _csv_data_url(csv_content)
-        raise RuntimeError(
-            "Export S3 bucket is not configured. Set EXPORTS_S3_BUCKET or S3_EXPORT_BUCKET."
-        )
+        if os.getenv("ENV", "").lower() in {"production", "prod"}:
+            raise RuntimeError("EXPORTS_S3_BUCKET is required for production CSV exports")
+        logger.info("Export S3 bucket is not configured; returning inline CSV data URL.")
+        return _csv_data_url(csv_content)
 
     try:
         import boto3
@@ -67,7 +66,7 @@ def _upload_csv_to_s3(csv_content: str, tenant_id: str, filename: str) -> str:
             "ResponseContentDisposition": f'attachment; filename="{filename}"',
             "ResponseContentType": "text/csv",
         },
-        ExpiresIn=int(os.getenv("EXPORT_PRESIGN_TTL_SECONDS", "900")),
+        ExpiresIn=int(os.getenv("EXPORT_PRESIGN_TTL_SECONDS", "300")),
     )
 
 

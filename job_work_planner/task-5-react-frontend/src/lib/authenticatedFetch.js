@@ -42,6 +42,18 @@ const BASE_URL = CONFIG.BASE_URL
 const DEFAULT_TIMEOUT_MS = 10_000
 const RETRY_DELAY_MS = 2_000
 
+function clearStaleAuthAndRedirect() {
+  try {
+    localStorage.removeItem('token')
+    localStorage.removeItem('roodha_auth_context')
+  } catch {
+    // Ignore storage access failures.
+  }
+  if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+    window.location.replace('/login')
+  }
+}
+
 // ---------------------------------------------------------
 // --- NETWORK UTILITIES ---
 // ---------------------------------------------------------
@@ -146,6 +158,34 @@ function isUsableToken(token) {
   )
 }
 
+function decodeJwtPayload(token) {
+  if (!isUsableToken(token)) return {}
+  const parts = token.split('.')
+  if (parts.length < 2) return {}
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    const decoded = atob(padded)
+    return JSON.parse(decoded)
+  } catch {
+    return {}
+  }
+}
+
+function deriveTenantIdFromToken(token) {
+  const payload = decodeJwtPayload(token)
+  const claimTenant =
+    payload['custom:tenant_id'] ||
+    payload.tenant_id ||
+    payload.tenantId
+  if (claimTenant) return String(claimTenant)
+
+  const email = payload.email || payload['cognito:username'] || payload.username
+  if (!email || typeof email !== 'string') return ''
+  const seed = email.split('@', 1)[0] || ''
+  return seed.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+}
+
 async function getRequestAuthContext() {
   const auth = await getLatestAuthContextForRequest().catch(() => null)
 
@@ -172,8 +212,8 @@ async function buildHeaders(overrides = {}) {
    */
   const auth = await getRequestAuthContext()
 
-  const tenantId = auth?.tenantId || auth?.tenant_id || ''
   const token = typeof auth?.token === 'string' ? auth.token.trim() : ''
+  const tenantId = auth?.tenantId || auth?.tenant_id || deriveTenantIdFromToken(token) || ''
   const headers = {
     'Content-Type': 'application/json',
     ...overrides,
@@ -202,7 +242,7 @@ async function executeRequest(url, fetchOptions, responseOptions = {}) {
 // ---------------------------------------------------------
 
 export async function authenticatedFetch(endpoint, options = {}, _retryCount = 0) {
-  const { params, ...requestOptions } = options
+  const { params, transformResponse, ...requestOptions } = options
   const url = buildRequestUrl(endpoint, params)
 
   const isCognito = url.includes('amazonaws.com') || url.includes('amazoncognito.com')
@@ -216,7 +256,7 @@ export async function authenticatedFetch(endpoint, options = {}, _retryCount = 0
 
     let response, data
     try {
-      ;({ response, data } = await executeRequest(url, fetchOptions))
+      ;({ response, data } = await executeRequest(url, fetchOptions, { transformResponse }))
     } catch (networkError) {
       // --- RESILIENCE LOGIC ---
       // Automatic retry on network failure or timeout
@@ -244,6 +284,11 @@ export async function authenticatedFetch(endpoint, options = {}, _retryCount = 0
 
     if (response.status === 401) {
       throw new APIError('This feed is not authorized for the current session. Please refresh or sign in again if all feeds fail.', 401, data)
+    }
+
+    if (response.status === 403) {
+      clearStaleAuthAndRedirect()
+      throw new APIError('Your role or access changed. Please sign in again.', 403, data)
     }
 
     // --- 5xx SERVER RETRY ---
