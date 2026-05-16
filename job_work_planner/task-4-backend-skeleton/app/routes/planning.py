@@ -261,11 +261,12 @@ async def get_machine_load(
     tenant_id = user["tenant_id"]
     try:
         operation_hours = case(
+            (models.OperationsMaster.standard_cycle_time_mins.is_(None), 0.1),
             (models.OperationsMaster.standard_cycle_time_mins <= 0, 0.1),
             else_=(cast(models.Job.quantity, Float) * cast(models.OperationsMaster.standard_cycle_time_mins, Float)) / 60.0,
         )
         booked_hours = func.coalesce(func.sum(operation_hours), 0.0)
-        operation_count = func.count(models.JobOperation.job_operation_id)
+        operation_count = func.count(models.JobOperation.job_op_id)
         filters = [
             models.Machine.tenant_id == tenant_id,
             models.JobOperation.tenant_id == tenant_id,
