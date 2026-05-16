@@ -15,6 +15,7 @@ import AuditTrailPanel from '../components/AuditTrailPanel'
 import { getAuthContext } from '../lib/auth'
 import { authenticatedFetch } from '../lib/authenticatedFetch'
 import { createJob, fetchJobAudit } from '../lib/jobsApi'
+import { fetchCustomFields, saveCustomFieldValue } from '../lib/customFieldsApi'
 import { fetchCustomers, fetchPartById, fetchParts } from '../lib/masterDataApi'
 import { hasPermission, normalizeRole } from '../lib/roles'
 
@@ -104,6 +105,8 @@ export default function JobsPage() {
   const [jobAuditOpen, setJobAuditOpen] = useState(false)
   const [jobAuditLoading, setJobAuditLoading] = useState(false)
   const [jobForm, setJobForm] = useState(emptyJobForm())
+  const [customFields, setCustomFields] = useState([])
+  const [customValues, setCustomValues] = useState({})
   const navigate = useNavigate()
 
   const filteredParts = useMemo(() => {
@@ -127,9 +130,10 @@ export default function JobsPage() {
       setLoading(true)
       setLoadError('')
       try {
-        const [customerList, partList] = await Promise.all([fetchCustomers(true), fetchParts()])
+        const [customerList, partList, fieldList] = await Promise.all([fetchCustomers(true), fetchParts(), fetchCustomFields('JOB')])
         setCustomers(customerList)
         setParts(partList)
+        setCustomFields(fieldList)
 
         const initialCustomerId = customerList[0]?.customer_id || ''
         const initialPart = partList.find((part) => part.customer_id === initialCustomerId) || partList[0] || null
@@ -225,11 +229,25 @@ export default function JobsPage() {
         priority: jobForm.priority,
       }))
 
+      const jobId = response.job?.job_id || response.job_id
+      if (jobId && customFields.length > 0) {
+        await Promise.all(
+          customFields
+            .filter((field) => customValues[field.field_id])
+            .map((field) => saveCustomFieldValue({
+              entity_id: jobId,
+              field_id: field.field_id,
+              value_text: customValues[field.field_id],
+            })),
+        )
+      }
+
       setCreatedJob(response)
       setJobAuditEntries([])
       setJobAuditOpen(false)
       toast.success(`Job ${response.job?.job_number || response.job?.jobNumber || 'created'} created. Opening the dashboard...`)
       setJobForm((current) => emptyJobForm(current.customer_id, current.part_id))
+      setCustomValues({})
       navigate('/')
     } catch {
       // Toasts are already handled by the shared API layer.
@@ -431,6 +449,36 @@ export default function JobsPage() {
                 </select>
               </div>
             </div>
+
+            {customFields.length > 0 && (
+              <div className="rounded-[26px] border border-slate-800 bg-slate-950 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Custom Fields</p>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  {customFields.map((field) => (
+                    <div key={field.field_id}>
+                      <label className={labelClass}>{field.field_name}</label>
+                      {field.field_type === 'DROPDOWN' ? (
+                        <select
+                          className={inputClass}
+                          value={customValues[field.field_id] || ''}
+                          onChange={(event) => setCustomValues((current) => ({ ...current, [field.field_id]: event.target.value }))}
+                        >
+                          <option value="">Select</option>
+                          {(field.options_json || []).map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          className={inputClass}
+                          type={field.field_type === 'NUMBER' ? 'number' : field.field_type === 'DATE' ? 'date' : 'text'}
+                          value={customValues[field.field_id] || ''}
+                          onChange={(event) => setCustomValues((current) => ({ ...current, [field.field_id]: event.target.value }))}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="rounded-[26px] border border-slate-800 bg-slate-950 p-5">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">

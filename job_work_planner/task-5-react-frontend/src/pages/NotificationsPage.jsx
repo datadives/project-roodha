@@ -77,9 +77,23 @@ export default function NotificationsPage() {
     setMarkingId(notificationId)
     try {
       await markNotificationRead(notificationId)
+      const wasUnread = notifications.some((notification) => (
+        notification.notification_id === notificationId && !notification.is_read
+      ))
+      const nextUnreadCount = wasUnread ? Math.max(0, unreadCount - 1) : unreadCount
+      setNotifications((current) => {
+        const updated = current.map((notification) => (
+          notification.notification_id === notificationId
+            ? { ...notification, is_read: true, read_at: new Date().toISOString() }
+            : notification
+        ))
+        return showUnreadOnly
+          ? updated.filter((notification) => !notification.is_read)
+          : updated
+      })
+      setUnreadCount(nextUnreadCount)
+      window.dispatchEvent(new CustomEvent('notifications:count', { detail: { unread_count: nextUnreadCount } }))
       toast.success('Notification marked as read')
-      await loadNotifications(showUnreadOnly)
-      window.dispatchEvent(new CustomEvent('notifications:refresh'))
     } catch {
       // Toasts are already handled by the shared API layer.
     } finally {

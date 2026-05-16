@@ -29,6 +29,25 @@ from app import models
 
 logger = logging.getLogger("jobwork-backend")
 
+_ZERO = Decimal("0.00")
+
+
+def _non_negative_decimal(value) -> Decimal:
+    decimal_value = Decimal(str(value or _ZERO))
+    return decimal_value if decimal_value >= _ZERO else _ZERO
+
+
+def _duration_hours(start: datetime | None, end: datetime | None) -> Decimal:
+    if not start or not end:
+        return _ZERO
+
+    seconds = (end - start).total_seconds()
+    if seconds <= 0:
+        return _ZERO
+
+    return Decimal(str(seconds / 3600.0))
+
+
 async def calculate_job_costs(db: AsyncSession, tenant_id: str, job_id: UUID):
     """
     Recalculates total production costs for a specific job.
@@ -78,12 +97,9 @@ async def calculate_job_costs(db: AsyncSession, tenant_id: str, job_id: UUID):
             # Worker rate fallback (Fallback logic as requested)
             w_rate = worker_rate if worker_rate is not None else Decimal("0.00")
 
-            if op.actual_start_time and op.actual_end_time:
-                duration = op.actual_end_time - op.actual_start_time
-                duration_hours = Decimal(str(duration.total_seconds() / 3600.0))
-                
-                total_machine_cost += duration_hours * m_rate
-                total_labour_cost += duration_hours * w_rate
+            duration_hours = _duration_hours(op.actual_start_time, op.actual_end_time)
+            total_machine_cost += duration_hours * m_rate
+            total_labour_cost += duration_hours * w_rate
 
         # 4. Calculate Material Cost
         material_rate = Decimal("0.00")
@@ -91,6 +107,11 @@ async def calculate_job_costs(db: AsyncSession, tenant_id: str, job_id: UUID):
             material_rate = job.part.default_material_cost_per_unit
         
         total_material_cost = Decimal(str(job.quantity)) * material_rate
+
+        total_machine_cost = _non_negative_decimal(total_machine_cost)
+        total_labour_cost = _non_negative_decimal(total_labour_cost)
+        total_material_cost = _non_negative_decimal(total_material_cost)
+        total_cost = _non_negative_decimal(total_machine_cost + total_labour_cost + total_material_cost)
 
         # 5. Upsert Cost Summary
         summary_query = select(models.JobCostSummary).where(
@@ -110,7 +131,7 @@ async def calculate_job_costs(db: AsyncSession, tenant_id: str, job_id: UUID):
         summary.machine_cost = total_machine_cost
         summary.labour_cost = total_labour_cost
         summary.material_cost = total_material_cost
-        summary.total_cost = total_machine_cost + total_labour_cost + total_material_cost
+        summary.total_cost = total_cost
         summary.last_calculated_at = datetime.utcnow()
 
         await db.commit()

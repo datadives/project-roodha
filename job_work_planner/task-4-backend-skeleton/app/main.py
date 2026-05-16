@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -23,7 +24,8 @@ from app.core.auth_middleware import (
 from app.database import refresh_engine_pools
 from app.routes import (
     auth, job_operations, jobs, master_data, metrics, 
-    notifications, planning, system, kanban, maintenance, exports
+    notifications, planning, system, kanban, maintenance, exports,
+    worklist, custom_fields, integrations
 )
 
 logger = logging.getLogger("jobwork-backend")
@@ -147,6 +149,19 @@ app.include_router(notifications.router, prefix="/api")
 app.include_router(kanban.router, prefix="/api")
 app.include_router(maintenance.router, prefix="/api")
 app.include_router(exports.router, prefix="/api")
+app.include_router(worklist.router, prefix="/api")
+app.include_router(custom_fields.router, prefix="/api")
+app.include_router(integrations.router, prefix="/api")
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request, exc):
+    if request.url.path == "/api/integrations/jobs":
+        return await integrations.integration_validation_exception_handler(request, exc)
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
 
 @app.get("/api/ping")
 async def ping():

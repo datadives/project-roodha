@@ -17,6 +17,7 @@ from app.core.metrics_service import (
     get_estimated_cost_summary_service,
     get_bottleneck_metrics_service,
     get_late_jobs_service,
+    get_on_time_delivery_percentage_service,
     get_wip_metrics_service,
 )
 from app.core.jobs_by_stage_service import get_jobs_by_stage_service
@@ -142,4 +143,28 @@ async def get_costing_summary(request: Request, db: AsyncSession = Depends(get_a
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal error generating costing summary."
+        )
+
+
+@router.get("/on-time-delivery")
+async def get_on_time_delivery_metrics(request: Request, db: AsyncSession = Depends(get_async_db)):
+    try:
+        user = _get_dashboard_user(request)
+        if user.get("role") != "OWNER":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Delivery performance analytics are restricted to owners.",
+            )
+        tenant_id = user["tenant_id"]
+
+        logger.info(f"Fetching On-Time Delivery metrics for tenant: {tenant_id}")
+        metrics = await get_on_time_delivery_percentage_service(db, tenant_id)
+        return api_success(metrics)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"CRITICAL: 500 error in get_on_time_delivery_metrics: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal error generating on-time delivery metrics.",
         )

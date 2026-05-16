@@ -117,6 +117,7 @@ class OperationsMaster(Base, TenantAuditMixin):
     tenant_id = Column(String, ForeignKey("tenants.tenant_id"), nullable=False)
     name = Column(String, nullable=False)
     description = Column(String)
+    default_machine_type = Column(String, nullable=True)
     standard_cycle_time_mins = Column("default_standard_cycle_time_mins", Integer, default=0, nullable=False)
     sequence_number = Column(Integer, nullable=True)
 
@@ -167,6 +168,7 @@ class Job(Base, TenantAuditMixin):
     priority = Column(String) # HIGH, MEDIUM, LOW
     status = Column(Enum(JobStatus, name="job_status"), default=JobStatus.NOT_STARTED, server_default="NOT_STARTED", nullable=False)
     quoted_price = Column(Numeric(10, 2), nullable=True)
+    tags_json = Column(JSON, nullable=True)
 
     part = relationship("Part", back_populates="jobs")
     customer = relationship("Customer", back_populates="jobs")
@@ -228,7 +230,10 @@ class Notification(Base):
     tenant_id = Column(String, ForeignKey("tenants.tenant_id"), nullable=False, index=True)
     user_id = Column(String, nullable=True, index=True)  # NULL = broadcast to all tenant users
     type = Column(String, nullable=False)                 # e.g. 'READY', 'CONFLICT', 'DELAY'
+    title = Column(String, nullable=True)
     message = Column(Text, nullable=False)
+    entity_type = Column(String, nullable=True)
+    entity_id = Column(String, nullable=True)
     entity_reference = Column(String, nullable=True)      # e.g. 'JOB-001', 'OP-XYZ'
     is_read = Column(Boolean, default=False, nullable=False, server_default="false")
     read_at = Column(DateTime, nullable=True)
@@ -269,6 +274,7 @@ class CustomField(Base, TenantAuditMixin):
     entity_type = Column(String, nullable=False) # e.g., 'JOB', 'PART'
     field_name = Column(String, nullable=False)
     field_type = Column(String, nullable=False) # e.g., 'STRING', 'NUMBER', 'DATE'
+    options_json = Column(JSON, nullable=True)
     is_required = Column(Boolean, default=False)
 
 class CustomFieldValue(Base, TenantAuditMixin):
@@ -278,4 +284,33 @@ class CustomFieldValue(Base, TenantAuditMixin):
     field_id = Column(UUID(as_uuid=True), ForeignKey("custom_fields.field_id"), nullable=False)
     entity_id = Column(UUID(as_uuid=True), nullable=False) # The ID of the specific Job or Part
     field_value = Column(String, nullable=True) # Always stored as string, casted on frontend
+    value_text = Column(String, nullable=True)
 
+
+class Event(Base):
+    """Tenant-scoped event log for V1.5 integrations and async processing."""
+    __tablename__ = "events"
+
+    event_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(String, ForeignKey("tenants.tenant_id"), nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    entity_type = Column(String, nullable=False)
+    entity_id = Column(String, nullable=False)
+    payload_json = Column(JSON, nullable=True)
+    status = Column(String, default="PENDING", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
+
+
+class IntegrationWebhook(Base, TenantAuditMixin):
+    """Outbound webhook configuration. Secrets are stored as hashes by callers."""
+    __tablename__ = "integration_webhooks"
+
+    webhook_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(String, ForeignKey("tenants.tenant_id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    direction = Column(String, default="OUTBOUND", nullable=False)
+    url = Column(String, nullable=False)
+    secret_hash = Column(String, nullable=True)
+    event_types_json = Column(JSON, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)

@@ -206,6 +206,7 @@ class PlanPayload(BaseModel):
 class OperationBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     standard_cycle_time_mins: int = Field(default=0, ge=0)
+    default_machine_type: Optional[str] = Field(default=None, max_length=255)
 
 class OperationCreate(OperationBase):
     pass
@@ -213,6 +214,7 @@ class OperationCreate(OperationBase):
 class OperationUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     standard_cycle_time_mins: Optional[int] = Field(default=None, ge=0)
+    default_machine_type: Optional[str] = Field(default=None, max_length=255)
 
 class OperationResponse(OperationBase):
     operation_id: UUID

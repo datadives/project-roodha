@@ -37,6 +37,10 @@ async def create_notification(
     notif_type: str,       # e.g. 'READY', 'CONFLICT', 'DELAY'
     message: str,
     entity_ref: str | None = None,
+    title: str | None = None,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    created_at: datetime | None = None,
 ) -> models.Notification:
     """
     Persists an in-app notification record to the database.
@@ -57,11 +61,14 @@ async def create_notification(
         tenant_id=tenant_id,
         user_id=user_id,
         type=notif_type,
+        title=title or notif_type.replace("_", " ").title(),
         message=message,
+        entity_type=entity_type,
+        entity_id=entity_id,
         entity_reference=entity_ref,
         is_read=False,
         read_at=None,
-        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        created_at=created_at or datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
     db.add(notification)

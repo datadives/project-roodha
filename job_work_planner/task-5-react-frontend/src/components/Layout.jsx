@@ -20,14 +20,20 @@ import BarChart3 from 'lucide-react/dist/esm/icons/chart-bar-big.js'
 import Bell from 'lucide-react/dist/esm/icons/bell.js'
 import LogOut from 'lucide-react/dist/esm/icons/log-out.js'
 import Users from 'lucide-react/dist/esm/icons/users.js'
+import ClipboardList from 'lucide-react/dist/esm/icons/clipboard-list.js'
+import SlidersHorizontal from 'lucide-react/dist/esm/icons/sliders-horizontal.js'
+import Wrench from 'lucide-react/dist/esm/icons/wrench.js'
 
 const navItems = [
   { to: '/dashboard', label: 'Board', permission: 'dashboard', allowedRoles: ['OWNER', 'SUPERVISOR'], icon: LayoutDashboard },
   { to: '/operator', label: 'Operator Kanban', permission: 'operatorDashboard', allowedRoles: ['OPERATOR'], icon: LayoutDashboard },
   { to: '/jobs', label: 'Jobs', permission: 'jobs', icon: Briefcase },
+  { to: '/planning', label: 'Plan', permission: 'autoSchedule', icon: SlidersHorizontal },
+  { to: '/worklist', label: 'Work', permission: 'worklist', icon: ClipboardList },
   { to: '/master-data', label: 'Master', permission: 'masterData', icon: Database },
   { to: '/analytics', label: 'Analytics', permission: 'analytics', icon: BarChart3 },
   { to: '/users', label: 'Users', permission: 'userManagement', icon: Users },
+  { to: '/settings', label: 'Settings', permission: 'settings', icon: Wrench },
   { to: '/notifications', label: 'Alerts', permission: 'notifications', showUnreadBadge: true, icon: Bell },
 ]
 
@@ -75,8 +81,19 @@ export default function Layout() {
       loadUnreadCount()
     }
 
+    function handleCountUpdate(event) {
+      const nextCount = Number(event?.detail?.unread_count ?? event?.detail?.unreadCount)
+      if (Number.isFinite(nextCount)) {
+        setUnreadCount(Math.max(0, nextCount))
+      }
+    }
+
     window.addEventListener('notifications:refresh', handleRefresh)
-    return () => window.removeEventListener('notifications:refresh', handleRefresh)
+    window.addEventListener('notifications:count', handleCountUpdate)
+    return () => {
+      window.removeEventListener('notifications:refresh', handleRefresh)
+      window.removeEventListener('notifications:count', handleCountUpdate)
+    }
   }, [missingSessionFields.length])
 
   if (missingSessionFields.length > 0) {
@@ -145,7 +162,7 @@ export default function Layout() {
               <item.icon className="h-4 w-4 shrink-0" />
               <span className="min-w-0 truncate">{item.label}</span>
               {item.showUnreadBadge && unreadCount > 0 && (
-                <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-slate-950/50 text-[10px] font-black text-orange-400">
+                <span aria-label={`${unreadCount} unread notifications`} className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-slate-950/50 text-[10px] font-black text-orange-400">
                   {unreadCount}
                 </span>
               )}

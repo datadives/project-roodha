@@ -13,7 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
-from app.services.export_service import generate_jobs_csv_and_upload, generate_machine_load_csv
+from app.services.export_service import (
+    generate_costing_summary_csv,
+    generate_delivery_performance_csv,
+    generate_jobs_csv_and_upload,
+    generate_machine_load_csv,
+    generate_wip_by_stage_csv,
+)
 from app.schemas.value_features import ExportResponse
 from app.core.auth_middleware import require_roles
 
@@ -31,7 +37,7 @@ async def _export_jobs_response(user: dict, db: AsyncSession) -> ExportResponse:
 
 @router.get("/jobs", response_model=ExportResponse)
 async def export_jobs_get(
-    user: dict = Depends(require_roles(["OWNER"])),
+    user: dict = Depends(require_roles(["OWNER", "SUPERVISOR"])),
     db: AsyncSession = Depends(get_async_db)
 ):
     """
@@ -44,7 +50,7 @@ async def export_jobs_get(
 
 @router.post("/jobs", response_model=ExportResponse)
 async def export_jobs_post(
-    user: dict = Depends(require_roles(["OWNER"])),
+    user: dict = Depends(require_roles(["OWNER", "SUPERVISOR"])),
     db: AsyncSession = Depends(get_async_db)
 ):
     """POST alias used by the dashboard and analytics export buttons."""
@@ -53,7 +59,7 @@ async def export_jobs_post(
 
 @router.post("/machine-load", response_model=ExportResponse)
 async def export_machine_load(
-    user: dict = Depends(require_roles(["OWNER"])),
+    user: dict = Depends(require_roles(["OWNER", "SUPERVISOR"])),
     db: AsyncSession = Depends(get_async_db)
 ):
     """
@@ -67,3 +73,35 @@ async def export_machine_load(
         return ExportResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+async def _run_export(generator, user: dict, db: AsyncSession) -> ExportResponse:
+    try:
+        result = await generator(db, user["tenant_id"])
+        return ExportResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.post("/wip-by-stage", response_model=ExportResponse)
+async def export_wip_by_stage(
+    user: dict = Depends(require_roles(["OWNER", "SUPERVISOR"])),
+    db: AsyncSession = Depends(get_async_db),
+):
+    return await _run_export(generate_wip_by_stage_csv, user, db)
+
+
+@router.post("/costing-summary", response_model=ExportResponse)
+async def export_costing_summary(
+    user: dict = Depends(require_roles(["OWNER", "SUPERVISOR"])),
+    db: AsyncSession = Depends(get_async_db),
+):
+    return await _run_export(generate_costing_summary_csv, user, db)
+
+
+@router.post("/delivery-performance", response_model=ExportResponse)
+async def export_delivery_performance(
+    user: dict = Depends(require_roles(["OWNER", "SUPERVISOR"])),
+    db: AsyncSession = Depends(get_async_db),
+):
+    return await _run_export(generate_delivery_performance_csv, user, db)

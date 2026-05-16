@@ -928,6 +928,9 @@ export default function DashboardPage({ auth: initialAuth = null }) {
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [quotedPriceInput, setQuotedPriceInput] = useState('')
   const [savingQuotedPrice, setSavingQuotedPrice] = useState(false)
+  const [dashboardMetrics, setDashboardMetrics] = useState({
+    onTimePercentage: null,
+  })
 
   const { data: jobDetail, mutate: mutateJobDetail, setData: setJobDetail } = useOptimisticUI(null)
 
@@ -949,6 +952,10 @@ export default function DashboardPage({ auth: initialAuth = null }) {
   const columns = useMemo(() => buildColumns(board?.stages), [board?.stages])
   const totalWip = useMemo(
     () => (asArray(board?.stages)).reduce((sum, stage) => sum + (stage.counts?.total || 0), 0),
+    [board?.stages],
+  )
+  const delayedJobs = useMemo(
+    () => (asArray(board?.stages)).reduce((sum, stage) => sum + (stage.counts?.delayed || 0), 0),
     [board?.stages],
   )
 
@@ -1181,6 +1188,34 @@ export default function DashboardPage({ auth: initialAuth = null }) {
   }, [isAuthenticated, tenantId, loadBoard])
 
   useEffect(() => {
+    if (!isAuthenticated || !tenantId || !hasPermission(normalizedUserRole, 'dashboard')) {
+      setDashboardMetrics({ onTimePercentage: null })
+      return
+    }
+
+    let isMounted = true
+    async function loadDashboardMetrics() {
+      try {
+        const onTime = await authenticatedFetch('metrics/on-time-delivery')
+        if (isMounted) {
+          setDashboardMetrics({
+            onTimePercentage: Number(onTime?.otd_percentage ?? onTime?.onTimePercentage ?? 0),
+          })
+        }
+      } catch {
+        if (isMounted) {
+          setDashboardMetrics({ onTimePercentage: null })
+        }
+      }
+    }
+
+    loadDashboardMetrics()
+    return () => {
+      isMounted = false
+    }
+  }, [isAuthenticated, tenantId, normalizedUserRole])
+
+  useEffect(() => {
     async function loadPlanningResources() {
       setResourceLoading(true)
       setResourceError('')
@@ -1302,12 +1337,18 @@ export default function DashboardPage({ auth: initialAuth = null }) {
                 </button>
               ) : null}
               <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950 px-6 py-4 shadow-inner">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">Active WIP</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">Total Active Jobs</span>
                 <span className="text-3xl font-black text-white font-mono tabular-nums mt-1">{totalWip}</span>
               </div>
               <div className="flex flex-col rounded-2xl border border-orange-900/50 bg-orange-950/20 px-6 py-4 shadow-inner">
-                <span className="text-[10px] font-black uppercase tracking-widest text-orange-500/80">System Mode</span>
-                <span className="text-3xl font-black text-orange-500 uppercase mt-1">Live</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-orange-500/80">Delayed Jobs</span>
+                <span className="text-3xl font-black text-orange-500 uppercase mt-1">{delayedJobs}</span>
+              </div>
+              <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950 px-6 py-4 shadow-inner">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">On-time % This Month</span>
+                <span className="text-3xl font-black text-white font-mono tabular-nums mt-1">
+                  {dashboardMetrics.onTimePercentage == null ? '--' : `${dashboardMetrics.onTimePercentage.toFixed(1)}%`}
+                </span>
               </div>
             </div>
           </div>

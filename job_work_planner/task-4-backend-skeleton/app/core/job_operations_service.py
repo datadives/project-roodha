@@ -17,7 +17,7 @@ Asynchronous Business Logic for Job Operations.
 
 import uuid
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 
@@ -27,6 +27,8 @@ from sqlalchemy.orm import selectinload
 
 from app import models
 from app.core.audit_service import log_audit_event_async
+from app.core.event_service import record_event
+from app.core.outbound_webhook_service import dispatch_outbound_webhooks
 
 logger = logging.getLogger("jobwork-backend")
 
@@ -46,6 +48,10 @@ ALLOWED_OPERATION_STATUSES = {
     "CANCELLED",
 }
 
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
 def _serialize_job_operation(operation: models.JobOperation) -> dict:
     return {
         "job_op_id": str(operation.job_op_id),
@@ -62,6 +68,10 @@ def _serialize_job_operation(operation: models.JobOperation) -> dict:
         "planned_start_date": operation.planned_start_date.isoformat() if operation.planned_start_date else None,
         "planned_end_date": operation.planned_end_date.isoformat() if operation.planned_end_date else None,
     }
+
+def _status_value(value) -> str:
+    return value.value if hasattr(value, "value") else str(value)
+
 
 async def _sync_parent_job_status(db: AsyncSession, tenant_id: str, job_id: UUID):
     # Fetch job
@@ -88,6 +98,7 @@ async def _sync_parent_job_status(db: AsyncSession, tenant_id: str, job_id: UUID
         job.status = models.JobStatus.IN_PROGRESS
     else:
         job.status = models.JobStatus.NOT_STARTED
+    return job
 
 async def update_job_operation_status_async(
     db: AsyncSession,
@@ -116,12 +127,7 @@ async def update_job_operation_status_async(
     if normalized_status not in ALLOWED_OPERATION_STATUSES:
         raise ValueError(f"Invalid operation status: {normalized_status}")
     
-    # 1. Update Basic Fields
-    operation.status = normalized_status
-    if "worker_id" in kwargs and kwargs["worker_id"]:
-        operation.worker_id = kwargs["worker_id"]
-
-    # 2. Hard Business Logic Validations (Requirement 3.B & 3.C)
+    # 1. Hard Business Logic Validations (Requirement 3.B & 3.C)
     
     # 2.1 Sequence Integrity (Requirement 3.C)
     # Prevent COMPLETING an operation if previous operations are not COMPLETED
@@ -152,7 +158,7 @@ async def update_job_operation_status_async(
             raise ValueError("Another operation for this job is already IN_PROGRESS. Only one active operation allowed.")
         
         if not operation.actual_start_time:
-            operation.actual_start_time = kwargs.get("actual_start_time", datetime.utcnow())
+            operation.actual_start_time = kwargs.get("actual_start_time") or _utcnow_naive()
 
     elif normalized_status == "COMPLETED":
         # Validate quantity (Requirement 3.B)
@@ -166,9 +172,14 @@ async def update_job_operation_status_async(
         if (q_completed + q_rejected) > job_qty:
             raise ValueError(f"Quantity reported ({q_completed + q_rejected}) exceeds total job quantity ({job_qty}).")
 
-        operation.actual_end_time = kwargs.get("actual_end_time", datetime.utcnow())
+        operation.actual_end_time = kwargs.get("actual_end_time") or _utcnow_naive()
         if not operation.actual_start_time:
             operation.actual_start_time = operation.actual_end_time # Fallback
+
+    # 2. Apply accepted state changes only after validation succeeds.
+    operation.status = normalized_status
+    if "worker_id" in kwargs and kwargs["worker_id"]:
+        operation.worker_id = kwargs["worker_id"]
 
     # 3. Handle Quantities
     if "quantity_completed" in kwargs:
@@ -177,7 +188,7 @@ async def update_job_operation_status_async(
         operation.quantity_rejected = kwargs["quantity_rejected"]
 
     # 4. Sync Job Status
-    await _sync_parent_job_status(db, tenant_id, operation.job_id)
+    job = await _sync_parent_job_status(db, tenant_id, operation.job_id)
 
     await db.commit()
     await db.refresh(operation)
@@ -193,6 +204,43 @@ async def update_job_operation_status_async(
         before=before_state,
         after=_serialize_job_operation(operation),
     )
+
+    status_before = _status_value(before_state.get("status")).split(".")[-1].upper()
+    job_completed = (
+        normalized_status == "COMPLETED"
+        and job is not None
+        and _status_value(job.status).split(".")[-1].upper() == "COMPLETED"
+        and status_before != "COMPLETED"
+    )
+    if job_completed:
+        completion_date = operation.actual_end_time or _utcnow_naive()
+        payload = {
+            "job_id": str(operation.job_id),
+            "status": "COMPLETED",
+            "completion_date": completion_date.isoformat(),
+        }
+        try:
+            await record_event(
+                db,
+                tenant_id=tenant_id,
+                event_type="JOB_COMPLETED",
+                entity_type="JOB",
+                entity_id=str(operation.job_id),
+                payload=payload,
+                flush_only=False,
+            )
+            await dispatch_outbound_webhooks(
+                db=db,
+                tenant_id=tenant_id,
+                event_type="JOB_COMPLETED",
+                payload=payload,
+            )
+        except Exception:
+            logger.exception(
+                "JOB_COMPLETED integration dispatch failed after job completion commit | tenant=%s | job=%s",
+                tenant_id,
+                operation.job_id,
+            )
 
     return operation
 

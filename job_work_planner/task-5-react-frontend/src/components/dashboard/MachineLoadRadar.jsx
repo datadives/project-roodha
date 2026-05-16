@@ -9,6 +9,12 @@ import { authenticatedFetch } from '../../lib/authenticatedFetch'
 
 const SHIFT_CAPACITY = 10
 
+function today(offset = 0) {
+  const value = new Date()
+  value.setDate(value.getDate() + offset)
+  return value.toISOString().slice(0, 10)
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value : []
 }
@@ -21,6 +27,7 @@ function normalizeMachineLoad(payload) {
       machineId: machine.machineId || machine.machine_id,
       machineName: machine.machineName || machine.machine_name || machine.name || 'Unassigned',
       bookedHours,
+      operationCount: Number(machine.operationCount ?? machine.operation_count ?? machine.operationsAssigned ?? machine.operations_assigned ?? 0),
       isOverloaded: Boolean(machine.isOverloaded ?? machine.is_overloaded ?? bookedHours > SHIFT_CAPACITY),
     }
   })
@@ -30,6 +37,8 @@ export default function MachineLoadRadar() {
   const [loads, setLoads] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
+  const [fromDate, setFromDate] = useState(today())
+  const [toDate, setToDate] = useState(today())
 
   useEffect(() => {
     let isMounted = true
@@ -38,7 +47,9 @@ export default function MachineLoadRadar() {
       setIsLoading(true)
       setError('')
       try {
-        const response = await authenticatedFetch('planning/machine-load')
+        const response = await authenticatedFetch('planning/machine-load', {
+          params: { from_date: fromDate, to_date: toDate },
+        })
         if (isMounted) {
           setLoads(normalizeMachineLoad(response))
         }
@@ -63,7 +74,7 @@ export default function MachineLoadRadar() {
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [fromDate, toDate])
 
   const peakHours = useMemo(
     () => Math.max(SHIFT_CAPACITY, ...loads.map((machine) => machine.bookedHours || 0)),
@@ -78,13 +89,23 @@ export default function MachineLoadRadar() {
             <div className="h-1 w-8 bg-orange-500" />
             <p className="text-[10px] font-black uppercase tracking-[0.35em] text-orange-500">Capacity Radar</p>
           </div>
-          <h2 className="text-3xl font-black uppercase tracking-tight text-white">Machine Load</h2>
+          <h2 className="text-3xl font-black uppercase tracking-tight text-white">Machine Load - Today / Date Range</h2>
           <p className="mt-2 text-sm font-medium text-slate-400">
             Shift capacity threshold: <span className="font-mono text-orange-300">{SHIFT_CAPACITY}h</span>
           </p>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
-          {isLoading ? 'Scanning...' : `${loads.length} Machines`}
+        <div className="grid gap-3 sm:grid-cols-[150px_150px_auto]">
+          <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+            From
+            <input className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+          </label>
+          <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+            To
+            <input className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+          </label>
+          <div className="flex items-center rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
+            {isLoading ? 'Scanning...' : `${loads.length} Machines`}
+          </div>
         </div>
       </div>
 
@@ -143,7 +164,7 @@ export default function MachineLoadRadar() {
                 <span className={overloaded ? 'text-red-300' : 'text-slate-500'}>
                   {overloaded ? 'Bottleneck' : 'Stable'}
                 </span>
-                <span className="font-mono text-slate-500">{percent}% radar scale</span>
+                <span className="font-mono text-slate-500">{machine.operationCount} ops assigned</span>
               </div>
             </article>
           )

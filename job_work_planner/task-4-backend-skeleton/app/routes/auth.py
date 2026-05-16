@@ -46,6 +46,7 @@ class TenantProvisionResponse(BaseModel):
 
 
 class UserInviteRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     email: EmailStr
     role: str = Field(pattern="^(SUPERVISOR|OPERATOR)$")
     machine_id: str | None = None
@@ -241,6 +242,8 @@ async def invite_user(
         {"Name": "custom:tenant_id", "Value": tenant_id},
         {"Name": "custom:user_role", "Value": role},
     ]
+    if payload.name:
+        user_attributes.append({"Name": "name", "Value": payload.name.strip()})
     if machine_id:
         user_attributes.append({"Name": "custom:machine_id", "Value": machine_id})
 

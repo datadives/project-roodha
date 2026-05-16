@@ -17,7 +17,7 @@ from datetime import datetime
 from urllib.parse import quote
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import case, cast, Float, func, select
 from app import models
 
 logger = logging.getLogger("jobwork-backend")
@@ -38,8 +38,6 @@ def _get_exports_bucket_name() -> str | None:
 def _upload_csv_to_s3(csv_content: str, tenant_id: str, filename: str) -> str:
     bucket_name = _get_exports_bucket_name()
     if not bucket_name:
-        if os.getenv("ENV", "").lower() in {"production", "prod"}:
-            raise RuntimeError("EXPORTS_S3_BUCKET is required for production CSV exports")
         logger.info("Export S3 bucket is not configured; returning inline CSV data URL.")
         return _csv_data_url(csv_content)
 
@@ -108,6 +106,7 @@ async def generate_jobs_csv_and_upload(db: AsyncSession, tenant_id: str) -> dict
         job_key = str(job.job_id)
         if job_key not in rows_by_job:
             rows_by_job[job_key] = {
+                "job_id": job.job_id,
                 "job_number": job.job_number,
                 "part_name": part_description or part_number or "",
                 "machine": machine_name or "",
@@ -117,16 +116,44 @@ async def generate_jobs_csv_and_upload(db: AsyncSession, tenant_id: str) -> dict
         elif not rows_by_job[job_key]["machine"] and machine_name:
             rows_by_job[job_key]["machine"] = machine_name
 
+    field_result = await db.execute(
+        select(models.CustomField)
+        .where(
+            models.CustomField.tenant_id == tenant_id,
+            models.CustomField.entity_type == "JOB",
+        )
+        .order_by(models.CustomField.field_name.asc())
+    )
+    custom_fields = field_result.scalars().all()
+    custom_values: dict[tuple[str, str], str] = {}
+    if custom_fields and rows_by_job:
+        value_result = await db.execute(
+            select(
+                models.CustomFieldValue.field_id,
+                models.CustomFieldValue.entity_id,
+                models.CustomFieldValue.value_text,
+                models.CustomFieldValue.field_value,
+            ).where(
+                models.CustomFieldValue.tenant_id == tenant_id,
+                models.CustomFieldValue.field_id.in_([field.field_id for field in custom_fields]),
+                models.CustomFieldValue.entity_id.in_([row["job_id"] for row in rows_by_job.values()]),
+            )
+        )
+        for field_id, entity_id, value_text, field_value in value_result.all():
+            custom_values[(str(entity_id), str(field_id))] = value_text or field_value or ""
+
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Job Number", "Part Name", "Machine", "Status", "Due Date"])
-    for row in rows_by_job.values():
+    custom_headers = [field.field_name for field in custom_fields]
+    writer.writerow(["Job Number", "Part Name", "Machine", "Status", "Due Date", *custom_headers])
+    for job_key, row in rows_by_job.items():
         writer.writerow([
             row["job_number"],
             row["part_name"],
             row["machine"],
             row["status"],
             row["due_date"],
+            *[custom_values.get((job_key, str(field.field_id)), "") for field in custom_fields],
         ])
 
     csv_content = output.getvalue()
@@ -209,6 +236,110 @@ async def generate_machine_load_csv(db: AsyncSession, tenant_id: str) -> dict:
     output.close()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return {
-        "download_url": _csv_data_url(csv_content),
+        "download_url": _upload_csv_to_s3(csv_content, tenant_id, f"datadives_machine_load_report_{timestamp}.csv"),
         "filename": f"datadives_machine_load_report_{timestamp}.csv",
     }
+
+
+async def generate_wip_by_stage_csv(db: AsyncSession, tenant_id: str) -> dict:
+    stmt = (
+        select(models.OperationsMaster.name, func.count(models.JobOperation.job_op_id))
+        .join(models.JobOperation, models.JobOperation.op_id == models.OperationsMaster.operation_id)
+        .join(models.Job, models.Job.job_id == models.JobOperation.job_id)
+        .where(
+            models.OperationsMaster.tenant_id == tenant_id,
+            models.JobOperation.tenant_id == tenant_id,
+            models.Job.tenant_id == tenant_id,
+            models.Job.status != models.JobStatus.COMPLETED,
+            models.JobOperation.status.notin_([
+                models.OperationStatus.COMPLETED,
+                models.OperationStatus.CANCELLED,
+            ]),
+        )
+        .group_by(models.OperationsMaster.name)
+        .order_by(models.OperationsMaster.name.asc())
+    )
+    result = await db.execute(stmt)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Stage", "Active Operation Count"])
+    for stage, count in result.all():
+        writer.writerow([stage, count])
+    csv_content = output.getvalue()
+    output.close()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"datadives_wip_by_stage_{timestamp}.csv"
+    return {"download_url": _upload_csv_to_s3(csv_content, tenant_id, filename), "filename": filename}
+
+
+async def generate_costing_summary_csv(db: AsyncSession, tenant_id: str) -> dict:
+    operation_hours = case(
+        (models.OperationsMaster.standard_cycle_time_mins <= 0, 0.1),
+        else_=(cast(models.Job.quantity, Float) * cast(models.OperationsMaster.standard_cycle_time_mins, Float)) / 60.0,
+    )
+    stmt = (
+        select(
+            models.Job.job_number,
+            models.Job.status,
+            models.Job.quantity,
+            models.Part.default_material_cost_per_unit,
+            func.coalesce(func.sum(operation_hours), 0.0),
+            func.coalesce(func.sum(func.coalesce(models.Machine.hourly_rate, 0) * operation_hours), 0.0),
+        )
+        .join(models.Part, models.Part.part_id == models.Job.part_id, isouter=True)
+        .join(models.JobOperation, models.JobOperation.job_id == models.Job.job_id, isouter=True)
+        .join(models.OperationsMaster, models.OperationsMaster.operation_id == models.JobOperation.op_id, isouter=True)
+        .join(models.Machine, models.Machine.machine_id == models.JobOperation.machine_id, isouter=True)
+        .where(models.Job.tenant_id == tenant_id)
+        .group_by(models.Job.job_number, models.Job.status, models.Job.quantity, models.Part.default_material_cost_per_unit)
+        .order_by(models.Job.job_number.asc())
+    )
+    result = await db.execute(stmt)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Job Number", "Status", "Quantity", "Material Cost", "Estimated Machine Hours", "Estimated Machine Cost", "Estimated Total"])
+    for job_number, status, quantity, material_unit, hours, machine_cost in result.all():
+        material_cost = float(material_unit or 0) * float(quantity or 0)
+        total = material_cost + float(machine_cost or 0)
+        writer.writerow([job_number, getattr(status, "value", status), quantity, round(material_cost, 2), round(float(hours or 0), 2), round(float(machine_cost or 0), 2), round(total, 2)])
+    csv_content = output.getvalue()
+    output.close()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"datadives_costing_summary_{timestamp}.csv"
+    return {"download_url": _upload_csv_to_s3(csv_content, tenant_id, filename), "filename": filename}
+
+
+async def generate_delivery_performance_csv(db: AsyncSession, tenant_id: str) -> dict:
+    completion_date = func.max(models.JobOperation.actual_end_time)
+    stmt = (
+        select(
+            models.Job.job_number,
+            models.Job.due_date,
+            models.Job.status,
+            completion_date.label("completion_date"),
+        )
+        .join(models.JobOperation, models.JobOperation.job_id == models.Job.job_id, isouter=True)
+        .where(models.Job.tenant_id == tenant_id)
+        .group_by(models.Job.job_number, models.Job.due_date, models.Job.status)
+        .order_by(models.Job.due_date.asc().nulls_last())
+    )
+    result = await db.execute(stmt)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Job Number", "Due Date", "Completion Date", "Status", "On Time"])
+    for job_number, due_date, status, completed_at in result.all():
+        on_time = "PENDING"
+        if completed_at and due_date:
+            on_time = "YES" if completed_at <= due_date else "NO"
+        writer.writerow([
+            job_number,
+            due_date.date().isoformat() if due_date else "",
+            completed_at.date().isoformat() if completed_at else "",
+            getattr(status, "value", status),
+            on_time,
+        ])
+    csv_content = output.getvalue()
+    output.close()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"datadives_delivery_performance_{timestamp}.csv"
+    return {"download_url": _upload_csv_to_s3(csv_content, tenant_id, filename), "filename": filename}

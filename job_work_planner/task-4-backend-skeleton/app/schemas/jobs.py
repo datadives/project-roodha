@@ -12,7 +12,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 from uuid import UUID
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional, List
 from app.models import JobStatus, OperationStatus
 
 class JobBase(BaseModel):
@@ -24,6 +24,8 @@ class JobBase(BaseModel):
 
 class JobCreate(JobBase):
     job_number: Optional[str] = None
+    tags: Optional[List[str]] = None
+    custom_fields: Optional[dict[str, str]] = None
 
 
 class JobUpdate(BaseModel):
@@ -32,6 +34,9 @@ class JobUpdate(BaseModel):
     priority: Optional[str] = None
     quantity: Optional[int] = Field(default=None, gt=0)
     remarks: Optional[str] = Field(default=None, max_length=1000)
+    operation_ids: Optional[List[UUID]] = None
+    route_operation_ids: Optional[List[UUID]] = None
+    operations: Optional[List[Any]] = None
 
 
 class JobOperationResponse(BaseModel):

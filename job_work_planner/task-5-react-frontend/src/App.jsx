@@ -17,7 +17,10 @@ import JobsPage from './pages/JobsPage'
 import MasterDataPage from './pages/MasterDataPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import NotificationsPage from './pages/NotificationsPage'
+import PlanningPage from './pages/PlanningPage'
+import SettingsPage from './pages/SettingsPage'
 import UserManagement from './pages/UserManagement'
+import WorklistPage from './pages/WorklistPage'
 import LoginPage from './pages/LoginPage'
 import { CONFIG } from './config'
 import { useAuth } from './context/AuthContext'
@@ -120,16 +123,19 @@ export default function App() {
               >
                 <Route path="/operator" element={<DashboardPage />} />
               </Route>
+              <Route path="/worklist" element={<WorklistPage />} />
               <Route
                 element={<ProtectedRoute allowedRoles={['OWNER', 'SUPERVISOR']} />}
               >
                 <Route path="/jobs" element={<JobsPage />} />
                 <Route path="/master-data" element={<MasterDataPage />} />
+                <Route path="/planning" element={<PlanningPage />} />
               </Route>
               <Route
                 element={<ProtectedRoute allowedRoles={['OWNER']} />}
               >
                 <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/users" element={<UserManagement />} />
               </Route>
               <Route path="/notifications" element={<NotificationsPage />} />

@@ -14,3 +14,18 @@ export async function fetchPlanningCalendar(params = {}) {
   const response = await api.get('/planning', { params })
   return response.data
 }
+
+export async function previewAutoSchedule(payload = {}) {
+  const response = await api.post('/planning/auto-schedule/preview', payload)
+  return response.data
+}
+
+export async function applyAutoSchedule(suggestions = []) {
+  const response = await api.post('/planning/auto-schedule/apply', { suggestions })
+  return response.data
+}
+
+export async function fetchWorklist(params = {}) {
+  const response = await api.get('/worklist', { params })
+  return response.data
+}

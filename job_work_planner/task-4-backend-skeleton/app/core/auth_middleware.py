@@ -1091,6 +1091,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             "/api/ping",
             "/docs", "/openapi.json", "/redoc",
             "/maintenance/batch-costing",
+            "/api/integrations/jobs",
         }
         if request.url.path in public_paths or request.url.path.startswith("/maintenance"):
             return await call_next(request)

@@ -11,7 +11,7 @@
 """
 from typing import Generic, TypeVar, Optional, Any
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import UTC, datetime
 
 T = TypeVar("T")
 
@@ -20,7 +20,7 @@ class ApiResponse(BaseModel, Generic[T]):
     message: str = "OK"
     data: Optional[T] = None
     error_code: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
 
 class ApiErrorResponse(ApiResponse):
     success: bool = False

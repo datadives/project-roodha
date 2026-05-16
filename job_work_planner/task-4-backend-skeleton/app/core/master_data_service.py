@@ -382,7 +382,8 @@ async def create_operation(db: AsyncSession, tenant_id: str, payload):
         operation_id=uuid.uuid4(),
         tenant_id=tenant_id,
         name=_normalize_text(payload.name),
-        standard_cycle_time_mins=payload.standard_cycle_time_mins
+        standard_cycle_time_mins=payload.standard_cycle_time_mins,
+        default_machine_type=_normalize_text(getattr(payload, "default_machine_type", None)),
     )
     db.add(operation)
     await db.commit()

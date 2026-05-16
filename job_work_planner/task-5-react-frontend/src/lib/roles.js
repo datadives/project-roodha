@@ -19,6 +19,7 @@ const permissionMatrix = {
     'analytics',
     'machineLoad',
     'autoSchedule',
+    'worklist',
     'exports',
     'settings',
     'userManagement',
@@ -34,11 +35,13 @@ const permissionMatrix = {
     'masterData',
     'machineLoad',
     'autoSchedule',
+    'worklist',
+    'exports',
     'notifications',
     'plan',
     'execute',
   ],
-  OPERATOR: ['operatorDashboard', 'notifications', 'execute'],
+  OPERATOR: ['operatorDashboard', 'worklist', 'notifications', 'execute'],
 }
 
 const roleLabels = {
@@ -79,7 +82,7 @@ export function hasPermission(role, permission) {
 }
 
 export function getDefaultRouteForRole(role) {
-  return hasPermission(role, 'operatorDashboard') ? '/operator' : '/dashboard'
+  return hasPermission(role, 'operatorDashboard') ? '/worklist' : '/dashboard'
 }
 
 export function listAllowedRoleLabels(roles = []) {

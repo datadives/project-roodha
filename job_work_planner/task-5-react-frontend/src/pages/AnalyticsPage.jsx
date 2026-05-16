@@ -13,6 +13,7 @@ import {
   fetchBottleneckMetrics,
   fetchCostingSummary,
   fetchLateJobsMetrics,
+  fetchOnTimeDeliveryMetrics,
   fetchWipMetrics,
 } from '../lib/metricsApi'
 import { authenticatedFetch } from '../lib/authenticatedFetch'
@@ -36,6 +37,7 @@ const EMPTY_COSTING = {
   recent_completed_jobs: [],
   top_estimated_jobs: [],
 }
+const EMPTY_ON_TIME_DELIVERY = { otd_percentage: 100, total_completed: 0, on_time_count: 0, late_count: 0 }
 
 function pick(value, snakeKey, camelKey = snakeKey) {
   return value?.[snakeKey] ?? value?.[camelKey]
@@ -75,6 +77,16 @@ function normalizeCosting(value) {
     },
     recent_completed_jobs: asArray(pick(safe, 'recent_completed_jobs', 'recentCompletedJobs')),
     top_estimated_jobs: asArray(pick(safe, 'top_estimated_jobs', 'topEstimatedJobs')),
+  }
+}
+
+function normalizeOnTimeDelivery(value) {
+  const safe = asObject(value, EMPTY_ON_TIME_DELIVERY)
+  return {
+    otd_percentage: Number(pick(safe, 'otd_percentage', 'otdPercentage')) || 0,
+    total_completed: Number(pick(safe, 'total_completed', 'totalCompleted')) || 0,
+    on_time_count: Number(pick(safe, 'on_time_count', 'onTimeCount')) || 0,
+    late_count: Number(pick(safe, 'late_count', 'lateCount')) || 0,
   }
 }
 
@@ -198,6 +210,7 @@ export default function AnalyticsPage() {
     bottlenecks: [],
     late_jobs: EMPTY_LATE_JOBS,
     costing: EMPTY_COSTING,
+    on_time_delivery: EMPTY_ON_TIME_DELIVERY,
   })
 
   useEffect(() => {
@@ -205,14 +218,15 @@ export default function AnalyticsPage() {
       setLoading(true)
       setError('')
       try {
-        const [wip, bottlenecks, lateJobs, costing] = await Promise.allSettled([
+        const [wip, bottlenecks, lateJobs, costing, onTimeDelivery] = await Promise.allSettled([
           fetchWipMetrics(),
           fetchBottleneckMetrics(),
           fetchLateJobsMetrics(),
           fetchCostingSummary(),
+          fetchOnTimeDeliveryMetrics(),
         ])
 
-        const failedRequests = [wip, bottlenecks, lateJobs, costing].filter((result) => result.status === 'rejected')
+        const failedRequests = [wip, bottlenecks, lateJobs, costing, onTimeDelivery].filter((result) => result.status === 'rejected')
           setAnalytics({
             wip_by_stage:
               wip.status === 'fulfilled'
@@ -234,6 +248,10 @@ export default function AnalyticsPage() {
                     }
                   })()
                 : EMPTY_COSTING,
+            on_time_delivery:
+              onTimeDelivery.status === 'fulfilled'
+                ? normalizeOnTimeDelivery(onTimeDelivery.value)
+                : EMPTY_ON_TIME_DELIVERY,
           })
         if (failedRequests.length > 0) {
           setError('Some analytics sources could not be loaded. Showing the data that is currently available.')
@@ -252,6 +270,7 @@ export default function AnalyticsPage() {
   const bottlenecks = asArray(analytics?.bottlenecks)
   const lateJobs = normalizeLateJobs(analytics?.late_jobs)
   const costing = normalizeCosting(analytics?.costing)
+  const onTimeDelivery = normalizeOnTimeDelivery(analytics?.on_time_delivery)
   const overview = costing.overview
   const wipTotal = useMemo(
     () => wipByStage.reduce((sum, stage) => sum + (stage?.count || 0), 0),
@@ -335,6 +354,30 @@ export default function AnalyticsPage() {
             >
               {exporting === 'machine-load' ? 'Exporting...' : 'Export Machine Load (CSV)'}
             </button>
+            <button
+              type="button"
+              onClick={() => handleExportReport('exports/wip-by-stage', 'datadives_wip_by_stage.csv', 'wip')}
+              disabled={Boolean(exporting)}
+              className="rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-black uppercase tracking-wider text-slate-300 shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exporting === 'wip' ? 'Exporting...' : 'Export WIP'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExportReport('exports/costing-summary', 'datadives_costing_summary.csv', 'costing')}
+              disabled={Boolean(exporting)}
+              className="rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-black uppercase tracking-wider text-slate-300 shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exporting === 'costing' ? 'Exporting...' : 'Export Costing'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExportReport('exports/delivery-performance', 'datadives_delivery_performance.csv', 'delivery')}
+              disabled={Boolean(exporting)}
+              className="rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-black uppercase tracking-wider text-slate-300 shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exporting === 'delivery' ? 'Exporting...' : 'Export Delivery'}
+            </button>
             <div className="rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-semibold text-slate-300">
               Total WIP: {wipTotal}
             </div>
@@ -345,12 +388,18 @@ export default function AnalyticsPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard
           label="Active Jobs"
           value={overview.active_jobs}
           hint="Jobs not yet completed in this tenant."
           accent="text-orange-400"
+        />
+        <MetricCard
+          label="On-time %"
+          value={`${onTimeDelivery.otd_percentage}%`}
+          hint={`${onTimeDelivery.on_time_count} of ${onTimeDelivery.total_completed} completed jobs on time.`}
+          accent="text-orange-300"
         />
         <MetricCard
           label="Late Jobs"

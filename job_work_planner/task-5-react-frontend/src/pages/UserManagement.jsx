@@ -16,6 +16,7 @@ const labelClass = 'text-[10px] font-black uppercase tracking-[0.24em] text-slat
 const ROLE_OPTIONS = ['SUPERVISOR', 'OPERATOR']
 
 export default function UserManagement() {
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState('SUPERVISOR')
   const [machineId, setMachineId] = useState('')
@@ -59,12 +60,14 @@ export default function UserManagement() {
       await authenticatedFetch('users/invite', {
         method: 'POST',
         body: JSON.stringify({
+          name: name.trim(),
           email: email.trim(),
           role,
           machine_id: role === 'OPERATOR' ? machineId || null : null,
         }),
       })
       toast.success('Employee invite sent')
+      setName('')
       setEmail('')
       setRole('SUPERVISOR')
       setMachineId('')
@@ -100,6 +103,19 @@ export default function UserManagement() {
         </div>
 
         <form className="space-y-5" onSubmit={handleSubmit}>
+          <div>
+            <label className={labelClass} htmlFor="employee-name">Name</label>
+            <input
+              id="employee-name"
+              className={inputClass}
+              type="text"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Ravi Supervisor"
+              required
+            />
+          </div>
+
           <div>
             <label className={labelClass} htmlFor="employee-email">Email Address</label>
             <input
@@ -154,7 +170,7 @@ export default function UserManagement() {
 
           <button
             type="submit"
-            disabled={submitting || !email.trim()}
+            disabled={submitting || !name.trim() || !email.trim()}
             className="h-12 w-full rounded-xl bg-orange-500 px-8 text-sm font-black uppercase tracking-widest text-slate-950 shadow-[0_4px_0_0_#9a3412] transition-all active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? 'Sending Invite...' : 'Invite Employee'}

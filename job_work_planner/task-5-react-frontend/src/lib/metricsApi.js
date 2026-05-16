@@ -26,6 +26,10 @@ export async function fetchCostingSummary() {
   return await authenticatedFetch('metrics/costing-summary')
 }
 
+export async function fetchOnTimeDeliveryMetrics() {
+  return await authenticatedFetch('metrics/on-time-delivery')
+}
+
 export async function fetchMachineLoadMetrics() {
   return await authenticatedFetch('planning/machine-load')
 }

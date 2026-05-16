@@ -11,6 +11,7 @@
 import React, { startTransition, useEffect, useMemo, useState, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
 import { DEV_TENANT_ID, getAuthContext } from '../lib/auth'
+import { fetchCustomFields } from '../lib/customFieldsApi'
 import { normalizeRole } from '../lib/roles'
 import { cn } from '../lib/utils'
 import {
@@ -69,7 +70,8 @@ function emptyPartForm(customerId = '') {
       { id: 'step-2', label: 'Machining' },
       { id: 'step-3', label: 'Quality Check' }
     ], 
-    default_material_cost_per_unit: '' 
+    default_material_cost_per_unit: '',
+    custom_fields: {},
   }
 }
 
@@ -91,6 +93,16 @@ function slugifyOperation(label) {
     return 'QUALITY_CHECK'
   }
   return normalized
+}
+
+function normalizeFieldType(field) {
+  return String(field?.field_type || '').trim().toUpperCase()
+}
+
+function validateCustomFieldValue(field, value) {
+  if (normalizeFieldType(field) !== 'NUMBER') return ''
+  if (!String(value || '').trim()) return ''
+  return Number.isFinite(Number(value)) ? '' : `${field.field_name} must be a number.`
 }
 
 function routeLabels(route = []) {
@@ -199,6 +211,8 @@ export default function MasterDataPage() {
   const [editingMachineId, setEditingMachineId] = useState(null)
   const [parts, setParts] = useState([])
   const [partForm, setPartForm] = useState(emptyPartForm())
+  const [partCustomFields, setPartCustomFields] = useState([])
+  const [partCustomFieldErrors, setPartCustomFieldErrors] = useState({})
   const [editingPartId, setEditingPartId] = useState(null)
   const [shifts, setShifts] = useState([])
   const [shiftForm, setShiftForm] = useState(emptyShiftForm())
@@ -285,6 +299,14 @@ export default function MasterDataPage() {
     }
   }, [])
 
+  const loadPartCustomFields = useCallback(async () => {
+    try {
+      setPartCustomFields(asArray(await fetchCustomFields('PART')))
+    } catch {
+      setPartCustomFields([])
+    }
+  }, [])
+
   const loadShifts = useCallback(async () => {
     setLoading((current) => ({ ...current, shifts: true }))
     try {
@@ -314,9 +336,10 @@ export default function MasterDataPage() {
   useEffect(() => {
     loadMachines()
     loadParts()
+    loadPartCustomFields()
     loadShifts()
     loadWorkers()
-  }, [loadMachines, loadParts, loadShifts, loadWorkers])
+  }, [loadMachines, loadPartCustomFields, loadParts, loadShifts, loadWorkers])
 
   async function handleCustomerSubmit(event) {
     event.preventDefault()
@@ -377,6 +400,18 @@ export default function MasterDataPage() {
       return
     }
 
+    const nextCustomFieldErrors = {}
+    asArray(partCustomFields).forEach((field) => {
+      const fieldKey = field.field_id || field.field_name
+      const error = validateCustomFieldValue(field, partForm.custom_fields?.[fieldKey])
+      if (error) nextCustomFieldErrors[fieldKey] = error
+    })
+    setPartCustomFieldErrors(nextCustomFieldErrors)
+    if (Object.keys(nextCustomFieldErrors).length > 0) {
+      toast.error('Fix custom field values before saving.')
+      return
+    }
+
     const payload = {
       part_number: partForm.part_number,
       customer_id: partForm.customer_id,
@@ -388,6 +423,7 @@ export default function MasterDataPage() {
       ...(partForm.default_material_cost_per_unit !== '' && {
         default_material_cost_per_unit: parseFloat(partForm.default_material_cost_per_unit),
       }),
+      custom_fields: partForm.custom_fields || {},
     }
 
     setSavingKey('part')
@@ -401,6 +437,7 @@ export default function MasterDataPage() {
       }
       await loadParts()
       setPartForm(emptyPartForm(asArray(customerCatalog)[0]?.customer_id || ''))
+      setPartCustomFieldErrors({})
       setEditingPartId(null)
     } catch {
       // Toasts are already handled by the API helper.
@@ -542,6 +579,25 @@ export default function MasterDataPage() {
       customer_id: part.customer_id,
       steps: routeLabels(part.default_operations_route).map((label, idx) => ({ id: `step-${idx}-${Date.now()}`, label })),
       default_material_cost_per_unit: part.default_material_cost_per_unit != null ? String(part.default_material_cost_per_unit) : '',
+      custom_fields: {},
+    })
+  }
+
+  function updatePartCustomField(field, value) {
+    const fieldKey = field.field_id || field.field_name
+    setPartForm((current) => ({
+      ...current,
+      custom_fields: {
+        ...(current.custom_fields || {}),
+        [fieldKey]: value,
+      },
+    }))
+    setPartCustomFieldErrors((current) => {
+      const next = { ...current }
+      const error = validateCustomFieldValue(field, value)
+      if (error) next[fieldKey] = error
+      else delete next[fieldKey]
+      return next
     })
   }
 
@@ -822,12 +878,12 @@ export default function MasterDataPage() {
           />
           <form className="space-y-4" onSubmit={handlePartSubmit}>
             <div>
-              <label className={labelClass}>Part number *</label>
-              <input className={inputClass} value={partForm.part_number} onChange={(event) => setPartForm((current) => ({ ...current, part_number: event.target.value }))} placeholder="PART-AX-204" required />
+              <label className={labelClass} htmlFor="part-number-input">Part number *</label>
+              <input id="part-number-input" className={inputClass} value={partForm.part_number} onChange={(event) => setPartForm((current) => ({ ...current, part_number: event.target.value }))} placeholder="PART-AX-204" required />
             </div>
             <div>
-              <label className={labelClass}>Customer *</label>
-              <select className={inputClass} value={partForm.customer_id} onChange={(event) => setPartForm((current) => ({ ...current, customer_id: event.target.value }))} required>
+              <label className={labelClass} htmlFor="part-customer-input">Customer *</label>
+              <select id="part-customer-input" className={inputClass} value={partForm.customer_id} onChange={(event) => setPartForm((current) => ({ ...current, customer_id: event.target.value }))} required>
                 <option value="">Select customer</option>
                 {asArray(customerCatalog).map((customer) => (
                   <option key={customer.customer_id} value={customer.customer_id}>
@@ -867,11 +923,45 @@ export default function MasterDataPage() {
                 placeholder="e.g. 85.00"
               />
             </div>
+            {asArray(partCustomFields).length > 0 ? (
+              <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-4">
+                <p className="mb-3 text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Custom Fields</p>
+                <div className="space-y-3">
+                  {asArray(partCustomFields).map((field) => {
+                    const fieldKey = field.field_id || field.field_name
+                    const fieldType = normalizeFieldType(field)
+                    const value = partForm.custom_fields?.[fieldKey] || ''
+                    const error = partCustomFieldErrors[fieldKey]
+                    return (
+                      <div key={fieldKey}>
+                        <label className={labelClass} htmlFor={`part-custom-${fieldKey}`}>{field.field_name}</label>
+                        <input
+                          id={`part-custom-${fieldKey}`}
+                          className={cn(inputClass, error ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20' : '')}
+                          type="text"
+                          inputMode={fieldType === 'NUMBER' ? 'decimal' : undefined}
+                          value={value}
+                          onChange={(event) => updatePartCustomField(field, event.target.value)}
+                          aria-invalid={Boolean(error)}
+                          aria-describedby={error ? `part-custom-${fieldKey}-error` : undefined}
+                          placeholder={fieldType === 'NUMBER' ? 'e.g. 12.5' : field.field_name}
+                        />
+                        {error ? (
+                          <p id={`part-custom-${fieldKey}-error`} className="mt-1 text-xs font-semibold text-red-300" role="alert">
+                            {error}
+                          </p>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : null}
             <div className="flex gap-3">
               <button type="submit" disabled={!canSubmitPart} className="rounded-full bg-orange-500 hover:bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 transition-colors">
                 {savingKey === 'part' ? 'Saving...' : editingPartId ? 'Update part' : 'Create part'}
               </button>
-              <button type="button" onClick={() => { setPartForm(emptyPartForm(asArray(customerCatalog)[0]?.customer_id || '')); setEditingPartId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
+              <button type="button" onClick={() => { setPartForm(emptyPartForm(asArray(customerCatalog)[0]?.customer_id || '')); setPartCustomFieldErrors({}); setEditingPartId(null) }} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">
                 Reset
               </button>
             </div>

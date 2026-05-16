@@ -97,6 +97,7 @@ async def patch_operation_status(
         )
 
     except ValueError as e:
+        await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.exception("Unexpected error in status update")

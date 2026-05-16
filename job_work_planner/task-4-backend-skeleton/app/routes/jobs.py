@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app import models
 from app.database import get_async_db
@@ -21,6 +21,8 @@ from app.core.auth_middleware import role_required
 from app.core.tenant_context import tenant_id_context, user_id_context
 from app.core.response_models import ApiResponse
 from app.core.proactive_delay_guard import calculate_alert_priority
+from app.core.event_service import record_event
+from app.core.notification_service import create_notification
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 logger = logging.getLogger("jobwork-backend")
@@ -105,8 +107,128 @@ def _parse_uuid_or_none(value) -> UUID | None:
         return None
 
 
+def _extract_route_operation_ids(payload: JobUpdate) -> list[UUID] | None:
+    explicit_ids = payload.operation_ids or payload.route_operation_ids
+    if explicit_ids is not None:
+        return [UUID(str(item)) for item in explicit_ids]
+
+    if payload.operations is None:
+        return None
+
+    operation_ids: list[UUID] = []
+    for item in payload.operations:
+        if isinstance(item, dict):
+            raw_id = item.get("job_operation_id") or item.get("job_op_id") or item.get("id")
+        else:
+            raw_id = item
+        parsed = _parse_uuid_or_none(raw_id)
+        if not parsed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Route operations must reference existing job operation ids.",
+            )
+        operation_ids.append(parsed)
+    return operation_ids
+
+
+async def _apply_job_route_operation_update(
+    db: AsyncSession,
+    tenant_id: str,
+    job_id: UUID,
+    requested_operation_ids: list[UUID],
+) -> None:
+    result = await db.execute(
+        select(models.JobOperation)
+        .where(
+            models.JobOperation.tenant_id == tenant_id,
+            models.JobOperation.job_id == job_id,
+        )
+        .with_for_update()
+    )
+    existing_operations = result.scalars().all()
+    existing_by_id = {operation.job_op_id: operation for operation in existing_operations}
+    requested_ids = set(requested_operation_ids)
+
+    unknown_ids = requested_ids - set(existing_by_id)
+    if unknown_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Route update contains operations that do not belong to this job.",
+        )
+
+    removed_operations = [
+        operation for operation in existing_operations
+        if operation.job_op_id not in requested_ids
+    ]
+    locked_statuses = {models.OperationStatus.IN_PROGRESS, models.OperationStatus.COMPLETED}
+    locked_removed = [
+        operation for operation in removed_operations
+        if operation.status in locked_statuses
+    ]
+    if locked_removed:
+        locked_steps = ", ".join(str(operation.sequence_number) for operation in locked_removed)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot remove operation(s) already started or completed: step {locked_steps}.",
+        )
+
+    for operation in removed_operations:
+        await db.delete(operation)
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_operation_key(value: str | None) -> str:
     return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
+
+
+def _normalize_custom_field_key(value: str | UUID) -> str:
+    return str(value or "").strip().lower()
+
+
+async def _resolve_job_custom_field_values(
+    db: AsyncSession,
+    tenant_id: str,
+    values: dict[str, str] | None,
+) -> list[tuple[models.CustomField, str]]:
+    provided = {
+        _normalize_custom_field_key(key): str(value).strip()
+        for key, value in (values or {}).items()
+        if value is not None
+    }
+    result = await db.execute(
+        select(models.CustomField).where(
+            models.CustomField.tenant_id == tenant_id,
+            models.CustomField.entity_type == "JOB",
+        )
+    )
+    fields = result.scalars().all()
+    resolved: list[tuple[models.CustomField, str]] = []
+    for field in fields:
+        field_value = provided.get(_normalize_custom_field_key(field.field_id))
+        if field_value is None:
+            field_value = provided.get(_normalize_custom_field_key(field.field_name))
+
+        if field.is_required and not field_value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Custom field '{field.field_name}' is required",
+            )
+
+        if field_value is None:
+            continue
+
+        if str(field.field_type or "").upper() == "DROPDOWN":
+            allowed_options = {str(option).strip() for option in (field.options_json or [])}
+            if field_value not in allowed_options:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid value for '{field.field_name}'. Allowed values: {', '.join(sorted(allowed_options))}",
+                )
+        resolved.append((field, field_value))
+    return resolved
 
 
 async def _resolve_route_operation(
@@ -148,6 +270,7 @@ async def _resolve_route_operation(
         name=str(operation_name).strip() or f"Operation {sequence_number}",
         description="Created from part route during job launch.",
         standard_cycle_time_mins=30,
+        default_machine_type=op_data.get("default_machine_type") or op_data.get("machine_type"),
         sequence_number=sequence_number,
     )
     db.add(operation)
@@ -192,6 +315,8 @@ async def create_job(
         if not part:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Part not found")
 
+        custom_field_values = await _resolve_job_custom_field_values(db, tenant_id, payload.custom_fields)
+
         job = models.Job(
             job_id=uuid4(),
             tenant_id=tenant_id,
@@ -202,9 +327,29 @@ async def create_job(
             due_date=payload.due_date,
             priority=payload.priority,
             status=models.JobStatus.NOT_STARTED,
+            tags_json=payload.tags or [],
         )
         db.add(job)
         await db.flush()
+        for field, field_value in custom_field_values:
+            db.add(
+                models.CustomFieldValue(
+                    value_id=uuid4(),
+                    tenant_id=tenant_id,
+                    field_id=field.field_id,
+                    entity_id=job.job_id,
+                    field_value=field_value,
+                    value_text=field_value,
+                )
+            )
+        await record_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="JOB_CREATED",
+            entity_type="JOB",
+            entity_id=str(job.job_id),
+            payload={"job_number": job.job_number, "priority": payload.priority},
+        )
 
         ops_route = part.default_operations_route or []
         job_operations = []
@@ -241,6 +386,18 @@ async def create_job(
             db.add(job_op)
             job_operations.append(job_op)
         await db.commit()
+        if str(payload.priority or "").upper() == "HIGH":
+            await create_notification(
+                db=db,
+                tenant_id=tenant_id,
+                user_id=None,
+                notif_type="HIGH_PRIORITY_JOB",
+                title="High priority job created",
+                message=f"Job {job.job_number} was created with high priority.",
+                entity_ref=job.job_number,
+                entity_type="JOB",
+                entity_id=str(job.job_id),
+            )
     except HTTPException:
         await db.rollback()
         raise
@@ -370,7 +527,19 @@ async def update_job(
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
+    requested_route_operation_ids = _extract_route_operation_ids(payload)
+    if requested_route_operation_ids is not None:
+        await _apply_job_route_operation_update(
+            db=db,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            requested_operation_ids=requested_route_operation_ids,
+        )
+
     update_data = payload.model_dump(exclude_unset=True)
+    update_data.pop("operation_ids", None)
+    update_data.pop("route_operation_ids", None)
+    update_data.pop("operations", None)
     update_data.pop("remarks", None)
 
     for field, value in update_data.items():
