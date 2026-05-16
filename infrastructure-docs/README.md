@@ -5,6 +5,7 @@ This folder contains non-secret AWS documentation and operational scripts for th
 ## Main Documents
 
 - `ROODHA_V15_RUNBOOK.md` - production runbook for backend, frontend, RDS, Cognito, SES readiness, deployment, verification, and rollback.
+- `LIVE_DEPLOYMENT_STATUS.md` - current live URLs, latest verified commit, local credential status, and next deploy action.
 - `aws-infrastructure-map.md` - current non-secret AWS topology and app wiring.
 - `V1_5_CRON_SETUP.md` - scheduled maintenance/EventBridge notes.
 

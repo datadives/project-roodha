@@ -2,6 +2,14 @@
 
 This runbook deploys the V1.5 planning automation, worklist, notifications, exports, custom fields, and integration hook changes on the existing Elastic Beanstalk + RDS stack.
 
+Before deployment, confirm the active AWS credentials are valid:
+
+```bash
+aws sts get-caller-identity
+```
+
+If this returns `InvalidClientTokenId`, the local access key is invalid or disabled. Use AWS CloudShell or generate a fresh IAM access key. Current local credential status is documented in `LIVE_DEPLOYMENT_STATUS.md`.
+
 ## 1. Backend Database Migration
 
 Run from the backend bundle or an environment that can reach RDS:

@@ -9,6 +9,9 @@ Roodha is a multi-tenant SaaS manufacturing job planner for job-work factories. 
 - Backend ping: http://roodha-backend-env.eba-52xsapkh.ap-south-1.elasticbeanstalk.com/api/ping
 - Backend readiness: http://roodha-backend-env.eba-52xsapkh.ap-south-1.elasticbeanstalk.com/api/ready
 
+Current deployment status and credential blockers are tracked in
+`infrastructure-docs/LIVE_DEPLOYMENT_STATUS.md`.
+
 ## Repository Structure
 
 - `job_work_planner/task-4-backend-skeleton/` - FastAPI backend, SQLAlchemy models, Alembic migrations, RDS integration, Cognito auth, and backend tests.
@@ -86,3 +89,4 @@ npm run build
 - Cognito manages signup, login, recovery, and role groups.
 - SES production readiness is still an AWS account/email deliverability item; in-app notifications do not depend on SES inbox delivery.
 - Detailed deployment and verification steps are in `infrastructure-docs/ROODHA_V15_RUNBOOK.md`.
+- If local AWS access-key CSV credentials fail with `InvalidClientTokenId`, deploy from AWS CloudShell or generate a fresh IAM access key before running any EB/S3 mutation commands.
