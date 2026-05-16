@@ -1,0 +1,51 @@
+# Node.js / React
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated infrastructure / local temp output
+cdk.out/
+cdk.out*/
+.codex-tmp/
+.autopilot_tmp/
+aws-*.json
+eb-*.json
+eb-*.log
+eb-*.txt
+task-*-eb-tail*.txt
+jwks.json
+update-env.json
+production.env
+preview.*.log
+pytest-cache-files-*/
+
+# Local databases and archives
+*.db
+*.sqlite3
+*.sqlite3-journal
+*.zip
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment files / secrets
+.env
+.env.*
+
+# OS / IDE
+Thumbs.db
+.DS_Store
+.vscode/

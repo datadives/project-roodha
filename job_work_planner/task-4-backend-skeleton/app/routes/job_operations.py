@@ -1,296 +1,182 @@
 """
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: job_operations.py
+ * 
+ * 1) Purpose: Defines API endpoints for job_operations.
+ * 2) Roadmap Connection: This file is a critical component of the Stage 2 (v1.5) Industrial 
+ *    Hardening phase. It enforces multi-tenancy, security (RBAC), and transactional 
+ *    resilience as defined in the formal Roadmap.
+ */
+"""
+"""
 job_operations.py
 -----------------
-Job Operation APIs
-
-SCRUM 28:
-- Update Job Operation Status (State Machine)
-
-SCRUM 29:
-- Plan Job Operation (Assign Machine / Shift / Dates)
-
-SCRUM 31:
-- Execution Controls (Start / Pause / Resume)
-
-RESPONSIBILITIES (API LAYER ONLY):
-- Authentication
-- RBAC
-- Input validation
-- Call service layer
-- Return response
-
-IMPORTANT:
-- NO business logic here
-- All rules live in service layer
+Asynchronous API routes for Job Operation execution, planning, and costing.
 """
 
-from fastapi import APIRouter, HTTPException, Request, status
+import logging
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, Request, status, BackgroundTasks
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional, List
 
-from app.core.job_operations_service import add_production_entry_service
-
-# -------------------------------------------------------
-# Import service layer functions
-# -------------------------------------------------------
+from app import models, schemas
+from app.database import get_async_db
 from app.core.job_operations_service import (
-    update_job_operation_status,
-    plan_job_operation_service,   # SCRUM 29
+    update_job_operation_status_async,
+    plan_job_operation_service_async,
 )
+from app.core.auth_middleware import role_required
+from app.core.audit_service import get_audit_trail_async
+from app.services.costing_service import calculate_job_costs
+from app.core.response_models import ApiResponse
 
-# -------------------------------------------------------
-# Router (MUST be defined before decorators)
-# -------------------------------------------------------
-router = APIRouter(
-    prefix="/job-operations",
-    tags=["Job Operations"]
-)
+router = APIRouter(prefix="/job-operations", tags=["Job Operations"])
+logger = logging.getLogger("jobwork-backend")
 
-# =======================================================
-# SCRUM 28 + SCRUM 31
-# PATCH /job-operations/{job_operation_id}/status
-# =======================================================
-@router.patch("/{job_operation_id}/status")
-def update_operation_status(
-    job_operation_id: str,
-    payload: dict,
+def _require_user(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user or not user.get("tenant_id"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Missing user context.")
+    return user
+
+@router.patch("/{job_op_id}/status", response_model=ApiResponse[schemas.JobOperationResponse])
+async def patch_operation_status(
+    job_op_id: UUID,
+    payload: schemas.JobOperationUpdate,
     request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
-    Update job operation status (SCRUM 28 + SCRUM 31 Execution Controls)
-
-    Payload example:
-    {
-        "status": "IN_PROGRESS",  # or PAUSED, COMPLETED
-        "quantity_completed": 5,  # Only if COMPLETED
-        "quantity_rejected": 0,
-        "rework_flag": false,
-        "rework_note": null,
-        "override_sequence": false
-    }
+    Updates the execution status of an operation. 
+    Triggers background costing if COMPLETED.
     """
-
-    # ---------------------------------------------------
-    # 1. Authentication
-    # ---------------------------------------------------
-    if not hasattr(request.state, "user"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized"
+    user = _require_user(request)
+    tenant_id = user["tenant_id"]
+    user_id = user.get("user_id", "unknown")
+    role = str(user.get("role") or "").upper()
+    if role == "OPERATOR":
+        assigned_machine_id = user.get("machine_id")
+        operation_result = await db.execute(
+            select(models.JobOperation).where(
+                models.JobOperation.job_op_id == job_op_id,
+                models.JobOperation.tenant_id == tenant_id,
+            )
         )
-
-    user = request.state.user
-    role = user.get("role", "OPERATOR")
-
-    # ---------------------------------------------------
-    # 2. RBAC
-    # ---------------------------------------------------
-    if role not in {"OPERATOR", "SUPERVISOR", "OWNER"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden"
-        )
-
-    # ---------------------------------------------------
-    # 3. Read payload
-    # ---------------------------------------------------
-    new_status = payload.get("status")
-    quantity_completed = payload.get("quantity_completed")
-    quantity_rejected = payload.get("quantity_rejected")
-    rework_flag = payload.get("rework_flag", False)
-    rework_note = payload.get("rework_note")
-    override_sequence = payload.get("override_sequence", False)
-
-    if not new_status:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="status is required"
-        )
-
-    # ---------------------------------------------------
-    # 4. Call service layer
-    # ---------------------------------------------------
-    try:
-        updated_operation = update_job_operation_status(
-            job_operation_id=job_operation_id,
-            user_id=user["user_id"],   # <--- AUDIT: Pass user_id to service
-            new_status=new_status,
-            quantity_completed=quantity_completed,
-            quantity_rejected=quantity_rejected,
-            rework_flag=rework_flag,
-            rework_note=rework_note,
-            override_sequence=override_sequence,
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc)
-        )
-
-    # ---------------------------------------------------
-    # 5. Response
-    # ---------------------------------------------------
-    return updated_operation
-
-
-# =======================================================
-# SCRUM 29
-# PATCH /job-operations/{job_operation_id}/plan
-# =======================================================
-@router.patch("/{job_operation_id}/plan")
-def plan_job_operation(
-    job_operation_id: str,
-    payload: dict,
-    request: Request,
-):
-    """
-    Plan a job operation (SCRUM 29)
-
-    Payload example:
-    {
-        "machine_id": "machine-1",
-        "shift_id": "shift-A",
-        "planned_start_date": "2026-02-01",
-        "planned_end_date": "2026-02-02"
-    }
-    """
-
-    # ---------------------------------------------------
-    # 1. Authentication
-    # ---------------------------------------------------
-    if not hasattr(request.state, "user"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized"
-        )
-
-    user = request.state.user
-    role = user.get("role")
-
-    # ---------------------------------------------------
-    # 2. RBAC (Supervisor / Owner only)
-    # ---------------------------------------------------
-    if role not in {"SUPERVISOR", "OWNER"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Supervisor or Owner can plan operations"
-        )
-
-    # ---------------------------------------------------
-    # 3. Read payload
-    # ---------------------------------------------------
-    machine_id = payload.get("machine_id")
-    shift_id = payload.get("shift_id")
-    planned_start_date = payload.get("planned_start_date")
-    planned_end_date = payload.get("planned_end_date")
-
-    # ---------------------------------------------------
-    # 4. Basic input validation (API level)
-    # ---------------------------------------------------
-    if not machine_id or not shift_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="machine_id and shift_id are required"
-        )
-
-    if not planned_start_date or not planned_end_date:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="planned_start_date and planned_end_date are required"
-        )
-
-    # ---------------------------------------------------
-    # 5. Call service layer (core logic)
-    # ---------------------------------------------------
-    try:
-        updated_operation = plan_job_operation_service(
-            job_operation_id=job_operation_id,
-            machine_id=machine_id,
-            shift_id=shift_id,
-            planned_start_date=planned_start_date,
-            planned_end_date=planned_end_date,
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc)
-        )
-
-    # ---------------------------------------------------
-    # 6. Response
-    # ---------------------------------------------------
-    return updated_operation 
-
-
-
-# -------------------------------------------------------
-# SCRUM 32 – Record Production Entry
-# POST /job-operations/{job_operation_id}/production
-# -------------------------------------------------------
-
-@router.post("/{job_operation_id}/production")
-def record_production(
-    job_operation_id: str,
-    payload: dict,
-    request: Request,
-):
-    """
-    Records production quantities for an operation.
-    """
-
-    # --------------------------------------------
-    # 1. Authentication
-    # --------------------------------------------
-    if not hasattr(request.state, "user"):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    user = request.state.user
-    operator_id = user.get("user_id")
-
-    produced_qty = payload.get("produced_qty", 0)
-    scrap_qty = payload.get("scrap_qty", 0)
-    rework_qty = payload.get("rework_qty", 0)
-    notes = payload.get("notes")
+        operation = operation_result.scalar_one_or_none()
+        if not operation or not assigned_machine_id or str(operation.machine_id or "") != str(assigned_machine_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Operators can only update operations assigned to their machine.",
+            )
 
     try:
-        result = add_production_entry_service(
-            job_operation_id=job_operation_id,
-            produced_qty=produced_qty,
-            scrap_qty=scrap_qty,
-            rework_qty=rework_qty,
-            operator_id=operator_id,
-            notes=notes,
+        updated_op = await update_job_operation_status_async(
+            db=db,
+            job_op_id=job_op_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            new_status=payload.status,
+            worker_id=payload.worker_id,
+            actual_start_time=payload.actual_start_time,
+            actual_end_time=payload.actual_end_time,
+            quantity_completed=payload.quantity_completed,
+            quantity_rejected=payload.quantity_rejected
         )
-        return result
 
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    
+        # Trigger background costing only if COMPLETED
+        if updated_op.status == "COMPLETED":
+            background_tasks.add_task(calculate_job_costs, db, tenant_id, updated_op.job_id)
 
+        return ApiResponse(
+            data=schemas.JobOperationResponse.model_validate(updated_op),
+            message=f"Operation {updated_op.status} successfully."
+        )
 
-# -------------------------------------------------------
-# GET Single Job Operation
-# GET /job-operations/{job_operation_id}
-# -------------------------------------------------------
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error in status update")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error.")
 
-from app.core.job_operations_service import JOB_OPERATIONS_TABLE
-
-
-@router.get("/{job_operation_id}")
-def get_job_operation(
-    job_operation_id: str,
+@router.patch("/{job_op_id}/plan", response_model=ApiResponse[schemas.JobOperationResponse])
+@role_required(["OWNER", "SUPERVISOR"])
+async def patch_operation_plan(
+    job_op_id: UUID,
+    payload: schemas.PlanPayload, # Reuse existing or update to schema.py version
     request: Request,
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
-    Fetch a single job operation.
-    Useful for debugging and UI stage tracking.
+    Assigns a machine and shift to an operation.
     """
+    user = _require_user(request)
+    tenant_id = user["tenant_id"]
 
-    # Authentication
-    if not hasattr(request.state, "user"):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Simple model_validate usually works with UUIDs in payload if using Pydantic
+    try:
+        updated_op = await plan_job_operation_service_async(
+            db=db,
+            job_op_id=job_op_id,
+            machine_id=payload.machine_id,
+            tenant_id=tenant_id,
+            shift_id=payload.shift_id,
+            planned_start_date=payload.planned_start_date,
+            planned_end_date=payload.planned_end_date
+        )
+        return ApiResponse(data=schemas.JobOperationResponse.model_validate(updated_op))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    job_op = JOB_OPERATIONS_TABLE.get(job_operation_id)
+@router.get("/{job_op_id}", response_model=ApiResponse[schemas.JobOperationResponse])
+async def get_operation(
+    job_op_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_async_db)
+):
+    user = _require_user(request)
+    tenant_id = user["tenant_id"]
 
-    if not job_op:
-        raise HTTPException(status_code=404, detail="Job operation not found")
+    query = select(models.JobOperation).where(
+        models.JobOperation.job_op_id == job_op_id,
+        models.JobOperation.tenant_id == tenant_id
+    )
+    result = await db.execute(query)
+    operation = result.scalar_one_or_none()
 
-    return job_op    
+    if not operation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operation not found.")
+
+    return ApiResponse(data=schemas.JobOperationResponse.model_validate(operation))
+
+
+@router.get("/{job_op_id}/audit", response_model=ApiResponse[List[dict]])
+@role_required(["OWNER", "SUPERVISOR"])
+async def get_operation_audit(
+    job_op_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Returns the audit history for a specific operation.
+    Only accessible by SUPERVISORS and OWNERS.
+    """
+    user = _require_user(request)
+    tenant_id = user["tenant_id"]
+
+    # Retrieve history using the audit service
+    history = await get_audit_trail_async(
+        db=db,
+        tenant_id=tenant_id,
+        entity_type="JOB_OPERATION",
+        entity_id=str(job_op_id)
+    )
+
+    return ApiResponse(
+        data=history,
+        message=f"Retrieved {len(history)} audit events."
+    )

@@ -1,138 +1,81 @@
 """
-system.py
- 
-This file contains system-level routes like:
-- health check
-- readiness check
-- user identity
-- tenant context
- 
-These routes are used by:
-- Load balancers
-- API Gateway
-- Authentication layer
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: system.py
+ * 
+ * 1) Purpose: Defines API endpoints for system.
+ * 2) Roadmap Connection: This file is a critical component of the Stage 2 (v1.5) Industrial 
+ *    Hardening phase. It enforces multi-tenancy, security (RBAC), and transactional 
+ *    resilience as defined in the formal Roadmap.
+ */
 """
- 
-from fastapi import APIRouter, Request, HTTPException
- 
-# Create a router object
-router = APIRouter()
- 
-# -------------------------------------------------------
-# PUBLIC ENDPOINT
-# -------------------------------------------------------
- 
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth_middleware import require_roles
+from app.core.proactive_delay_guard import evaluate_tenant_delays
+from app.database import fetch_db_runtime_snapshot, get_async_db
+from app.routes.response_utils import api_success
+
+router = APIRouter(tags=["System"])
+
+
 @router.get("/health")
 def health_check():
-    """
-    Health check endpoint.
-    This is used by:
-    - Load balancer
-    - API Gateway
-    - Monitoring tools
- 
-    No authentication required.
-    """
-    return {
-        "status": "ok",
-        "service": "jobwork-backend"
-    }
- 
- 
+    return api_success({"status": "ok", "service": "jobwork-backend"}, message="Health check passed")
+
+
 @router.get("/ready")
-def readiness_check():
-    """
-    Readiness endpoint.
- 
-    Used to check whether the application is ready
-    to receive traffic.
- 
-    Dependencies are MOCKED for now.
-    """
-    return {
-        "status": "ready",
-        "dependencies": {
-            "database": "not_checked",
-            "s3": "not_checked"
-        }
-    }
- 
- 
-# -------------------------------------------------------
-# AUTH HELPER (MOCK JWT VALIDATION)
-# -------------------------------------------------------
- 
-def get_user_from_jwt(request: Request):
-    """
-    MOCK JWT validation logic.
- 
-    In real life:
-    - Token will be validated using Cognito
-    - Signature + expiry will be checked
- 
-    For now:
-    - We only check if Authorization header exists
-    """
- 
-    auth_header = request.headers.get("Authorization")
- 
-    if not auth_header:
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization header missing"
-        )
- 
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid Authorization header format"
-        )
- 
-    # Mock user extracted from token
-    return {
-        "user_id": "mock-user-id",
-        "email": "mock.user@jobwork.com"
-    }
- 
- 
-# -------------------------------------------------------
-# PROTECTED ENDPOINTS
-# -------------------------------------------------------
- 
-@router.get("/me")
-def get_current_user(request: Request):
-    """
-    Returns logged-in user info.
- 
-    Requires JWT.
-    """
-    user = get_user_from_jwt(request)
- 
-    return {
-        "message": "JWT received successfully",
-        "user": user
-    }
- 
- 
+async def readiness_check():
+    snapshot = await fetch_db_runtime_snapshot()
+    missing_tables = [
+        table_name
+        for table_name, row_count in snapshot.get("table_counts", {}).items()
+        if row_count == "missing"
+    ]
+    status_value = "ready" if not missing_tables else "degraded"
+    return api_success(
+        {
+            "status": status_value,
+            "dependencies": {
+                "database": "ok" if not missing_tables else "missing_tables",
+                "missing_tables": missing_tables,
+            },
+            "database": snapshot,
+        },
+        message="Readiness check passed" if not missing_tables else "Readiness check degraded",
+    )
+
+
 @router.get("/tenant/current")
 def get_current_tenant(request: Request):
-    """
-    Returns current tenant context.
- 
-    This is IMPORTANT for multi-tenant SaaS systems.
- 
-    Requires JWT.
-    """
-    user = get_user_from_jwt(request)
- 
-    # Mock tenant info
+    user = getattr(request.state, "user", None)
+    if not user or not user.get("tenant_id"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
     tenant = {
-        "tenant_id": "tenant-123",
+        "tenant_id": user["tenant_id"],
         "tenant_name": "Demo Company Pvt Ltd",
-        "plan": "trial"
+        "plan": "trial",
     }
- 
-    return {
-        "user": user,
-        "tenant": tenant
-    }
+
+    return api_success({"user": user, "tenant": tenant}, message="Current tenant fetched")
+
+
+@router.get("/debug/db-check")
+async def debug_db_check():
+    snapshot = await fetch_db_runtime_snapshot()
+    return api_success(snapshot, message="Database runtime check passed")
+
+
+@router.post("/system/delay-guard/evaluate")
+async def trigger_delay_guard_evaluation(
+    user: dict = Depends(require_roles(["OWNER"])),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Manually evaluate V1.5 delay risk for the authenticated tenant and create
+    tenant-wide delay notifications for overdue or near-due jobs.
+    """
+    result = await evaluate_tenant_delays(db, user["tenant_id"])
+    return api_success(result, message="Delay guard evaluation completed")

@@ -1,0 +1,169 @@
+/**
+ * PROJECT ROODHA - v1.5.7 "Gold Baseline"
+ * File: index.css
+ * 
+ * 1) Purpose: Frontend core logic.
+ * 2) Roadmap Connection: Contributes to the Stage 2 (v1.5) UI/UX requirements. 
+ *    Implements the "Safety Orange" aesthetics, JetBrains Mono precision typography, 
+ *    and responsive data visualization critical for shop-floor dashboards.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* High-Contrast Industrial Palette */
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  
+  --industrial-bg: #0F172A;
+  --industrial-surface: #0F172A;
+  --industrial-border: #334155;
+  --industrial-accent: #FF6B00; /* Safety Orange */
+  --industrial-idle: #94A3B8;
+  
+  --text-primary: #F8FAFC;
+  --text-muted: #94A3B8;
+  
+  --success: #22C55E;
+  --warning: #FF6B00;
+  --danger: #FF6B00;
+
+  /* Tap target safety for factory operations */
+  --min-tap-target: 48px;
+  --safe-padding: 1rem;
+}
+
+@layer base {
+  html {
+    background-color: var(--industrial-bg);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--font-ui);
+    line-height: 1.5;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold tracking-tight text-slate-50;
+  }
+}
+
+@layer utilities {
+  .touch-target {
+    min-height: var(--min-tap-target);
+    @apply flex items-center justify-center;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  .rugged-card {
+    background-color: var(--industrial-bg);
+    border: 1px solid var(--industrial-border);
+    box-shadow: 0 20px 40px -24px rgba(15, 23, 42, 0.95);
+    transition: all 0.2s ease;
+  }
+
+  .pulse-red,
+  .pulse-safety-orange {
+    animation: pulse-safety-orange-bg 2s infinite;
+  }
+
+  @keyframes pulse-safety-orange-bg {
+    0%, 100% {
+      background-color: #FF6B00;
+      box-shadow: 0 0 0 0 rgba(255, 107, 0, 0.72);
+    }
+    50% {
+      background-color: #B34700;
+      box-shadow: 0 0 22px 12px rgba(255, 107, 0, 0);
+    }
+  }
+
+  .live-dot {
+    animation: live-dot-pulse 1.6s infinite;
+  }
+
+  @keyframes live-dot-pulse {
+    0%, 100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.65);
+    }
+    50% {
+      opacity: 0.55;
+      box-shadow: 0 0 0 7px rgba(34, 197, 94, 0);
+    }
+  }
+
+  .industrial-number,
+  .machine-id,
+  [data-machine-id],
+  [data-numeric] {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .industrial-table {
+    @apply min-w-full text-sm border-collapse;
+  }
+  .industrial-table thead {
+    background-color: var(--industrial-bg);
+    @apply text-left text-slate-300;
+  }
+  .industrial-table th {
+    border-bottom: 1px solid var(--industrial-border);
+    @apply p-4 font-black uppercase tracking-wider text-xs;
+  }
+  .industrial-table tbody tr {
+    background-color: var(--industrial-bg);
+    border-bottom: 1px solid var(--industrial-border);
+    @apply transition-colors;
+  }
+  .industrial-table tbody tr:hover {
+    background-color: rgba(148, 163, 184, 0.08);
+  }
+  .industrial-table td {
+    @apply p-4;
+  }
+}
+
+/* Base resets for mobile */
+input, select, textarea, button {
+  font-size: 16px !important;
+  appearance: none;
+  min-height: var(--min-tap-target);
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--industrial-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--industrial-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

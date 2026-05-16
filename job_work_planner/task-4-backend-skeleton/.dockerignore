@@ -1,0 +1,60 @@
+# Docker ignore for Project Roodha Backend
+# Prevents bloating the image with dev artifacts
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments (CRITICAL — never copy into image)
+.venv/
+venv/
+env/
+ENV/
+
+# Test artifacts
+.pytest_cache/
+pytest-cache-files-*/
+tests/
+*.test.py
+
+# Local env files (secrets injected via App Runner env vars)
+.env
+.env.local
+.env.development
+
+# Alembic migration state (migrations run separately, not on container start)
+# Keep alembic/ itself since it contains versions/
+# alembic/
+
+# Dev/debug scripts (not needed in production image)
+scratch/
+*.scratch.py
+scratch_*.py
+create_admin.py
+debug_*.py
+verify_*.py
+seed_*.py
+seed_*.txt
+validate_*.py
+final_certification.py
+test_*.py
+test_*.http
+monitoring/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Misc
+*.log
+*.txt
+curl
+uvicorn

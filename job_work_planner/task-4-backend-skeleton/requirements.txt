@@ -3,3 +3,16 @@ uvicorn[standard]
 pydantic
 python-dotenv
 mangum
+python-jose[cryptography]
+requests
+urllib3<2
+alembic
+sqlalchemy
+psycopg2-binary
+fpdf2
+boto3
+asyncpg
+email-validator
+pytest
+pytest-asyncio
+httpx
