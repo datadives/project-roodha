@@ -23,6 +23,7 @@ import {
   confirmSignUp as confirmCognitoSignUp,
   confirmResetPassword as confirmCognitoResetPassword,
   getAuthContext,
+  handleConfirmSignIn,
   login as cognitoLogin,
   logout as clearStoredAuth,
   resendSignUpCode as resendCognitoSignUpCode,
@@ -36,12 +37,14 @@ const AUTH_VIEWS = {
   LOGIN: 'LOGIN',
   CREATE_ACCOUNT: 'CREATE_ACCOUNT',
   FORGOT_PASSWORD: 'FORGOT_PASSWORD',
+  SET_INVITE_PASSWORD: 'SET_INVITE_PASSWORD',
 }
 
 const AUTH_VIEW_LABELS = {
   [AUTH_VIEWS.LOGIN]: 'Login',
   [AUTH_VIEWS.CREATE_ACCOUNT]: 'New',
   [AUTH_VIEWS.FORGOT_PASSWORD]: 'Reset',
+  [AUTH_VIEWS.SET_INVITE_PASSWORD]: 'Invite',
 }
 
 const DASHBOARD_PATH = '/dashboard'
@@ -101,7 +104,9 @@ function getErrorDisplay(error) {
   if (error?.code === 'NewPasswordRequiredException') {
     return {
       code: error.code,
-      message: error.message || 'This invite needs a new password. If it expired, ask the Owner to resend it.',
+      message:
+        error.message ||
+        'Use Set New Password to complete this invite. Recovery OTP is for existing confirmed users who forgot a permanent password.',
     }
   }
 
@@ -186,6 +191,9 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
   const [recoveryStep, setRecoveryStep] = useState('REQUEST_CODE')
   const [recoveryCode, setRecoveryCode] = useState('')
   const [newPassword, setNewPassword] = useState('')
+  const [invitePassword, setInvitePassword] = useState('')
+  const [invitePasswordConfirm, setInvitePasswordConfirm] = useState('')
+  const [inviteIdentity, setInviteIdentity] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState('')
@@ -233,6 +241,14 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
       }
     }
 
+    if (view === AUTH_VIEWS.SET_INVITE_PASSWORD) {
+      return {
+        title: 'Set New Password',
+        subtitle: 'Complete your invite with a permanent password.',
+        icon: LockKeyhole,
+      }
+    }
+
     return {
       title: 'Secure Login',
       subtitle: 'Sign in to your factory workspace.',
@@ -261,6 +277,10 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
       setRecoveryStep('REQUEST_CODE')
       setRecoveryCode('')
       setNewPassword('')
+    }
+    if (nextView !== AUTH_VIEWS.SET_INVITE_PASSWORD) {
+      setInvitePassword('')
+      setInvitePasswordConfirm('')
     }
   }
 
@@ -302,6 +322,24 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
       userRole: provisionedRole,
       user_role: provisionedRole,
     }
+  }
+
+  const finishAuthenticatedSession = async () => {
+    const authContext = await getAuthContext({ forceFresh: true })
+    if (!authContext?.isAuthenticated || !authContext?.token) {
+      throw {
+        code: 'SessionHydrationError',
+        name: 'SessionHydrationError',
+        message: 'Sign-in succeeded, but the app could not create a complete session. Please try again.',
+      }
+    }
+    const workspace = await provisionTenantWorkspace()
+    const provisionedAuthContext = applyProvisionedRole(authContext, workspace)
+    flushSync(() => {
+      setGlobalAuth(provisionedAuthContext)
+    })
+    toast.success('ACCESS GRANTED')
+    navigate(DASHBOARD_PATH, { replace: true })
   }
 
   const handleGoogleSignIn = () => {
@@ -388,51 +426,55 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
         signInStep === 'FORCE_CHANGE_PASSWORD'
       ) {
         console.warn('[Cognito] Login blocked by password challenge:', signInStep, result?.nextStep)
-        throw {
-          code: 'NewPasswordRequiredException',
-          name: 'NewPasswordRequiredException',
-          message: 'This invite requires a new password. If the invite is older than 7 days, ask the Owner to resend it.',
-        }
+        setInviteIdentity(normalizedIdentity)
+        setInvitePassword('')
+        setInvitePasswordConfirm('')
+        setView(AUTH_VIEWS.SET_INVITE_PASSWORD)
+        setNotice('Your invite is valid. Set a permanent password to finish signing in.')
+        return
       }
 
-      const authContext = await getAuthContext({ forceFresh: true })
-      if (!authContext?.isAuthenticated || !authContext?.token) {
-        throw {
-          code: 'SessionHydrationError',
-          name: 'SessionHydrationError',
-          message: 'Sign-in succeeded, but the app could not create a complete session. Please try again.',
-        }
-      }
-      const workspace = await provisionTenantWorkspace()
-      const provisionedAuthContext = applyProvisionedRole(authContext, workspace)
-      flushSync(() => {
-        setGlobalAuth(provisionedAuthContext)
-      })
-      toast.success('ACCESS GRANTED')
-      navigate(DASHBOARD_PATH, { replace: true })
+      await finishAuthenticatedSession()
     } catch (authError) {
       const message = authError?.message || ''
       if (message.toLowerCase().includes('already a signed in user')) {
-        const authContext = await getAuthContext({ forceFresh: true })
-        if (!authContext?.isAuthenticated || !authContext?.token) {
-          handleAuthError({
-            code: 'SessionHydrationError',
-            name: 'SessionHydrationError',
-            message: 'You are signed in with Cognito, but the app could not load your session. Please refresh once and try again.',
-          })
-          return
-        }
-        const workspace = await provisionTenantWorkspace()
-        const provisionedAuthContext = applyProvisionedRole(authContext, workspace)
-        flushSync(() => {
-          setGlobalAuth(provisionedAuthContext)
-        })
-        navigate(DASHBOARD_PATH, { replace: true })
+        await finishAuthenticatedSession()
       } else if (authError?.code === 'UserNotConfirmedException') {
         openSignupView('This account exists but is not verified yet. Enter the email OTP if you have it, or use Resend OTP below.')
       } else {
         handleAuthError(authError)
       }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleInvitePasswordSubmit = async (event) => {
+    event.preventDefault()
+    setIsLoading(true)
+    setError(null)
+    setNotice('')
+
+    try {
+      if (invitePassword.length < 8) {
+        throw {
+          code: 'ValidationError',
+          name: 'ValidationError',
+          message: 'New password must be at least 8 characters.',
+        }
+      }
+      if (invitePassword !== invitePasswordConfirm) {
+        throw {
+          code: 'ValidationError',
+          name: 'ValidationError',
+          message: 'New password and confirmation must match.',
+        }
+      }
+
+      await handleConfirmSignIn({ challengeResponse: invitePassword })
+      await finishAuthenticatedSession()
+    } catch (authError) {
+      handleAuthError(authError)
     } finally {
       setIsLoading(false)
     }
@@ -665,7 +707,7 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
   const tabStyle =
     'min-h-[40px] min-w-0 border border-slate-700 px-2 text-xs font-black uppercase tracking-normal transition disabled:cursor-not-allowed disabled:opacity-60'
   const visibleViews = ENABLE_SELF_SIGNUP
-    ? Object.values(AUTH_VIEWS)
+    ? [AUTH_VIEWS.LOGIN, AUTH_VIEWS.CREATE_ACCOUNT, AUTH_VIEWS.FORGOT_PASSWORD]
     : [AUTH_VIEWS.LOGIN, AUTH_VIEWS.FORGOT_PASSWORD]
   const tabCols = ENABLE_SELF_SIGNUP ? 'grid-cols-3' : 'grid-cols-2'
 
@@ -793,6 +835,68 @@ export default function LoginPage({ initialMode = AUTH_VIEWS.LOGIN }) {
                   Demo Access
                 </button>
               )}
+            </form>
+          )}
+
+          {view === AUTH_VIEWS.SET_INVITE_PASSWORD && (
+            <form className="space-y-5" onSubmit={handleInvitePasswordSubmit} autoComplete="off" noValidate>
+              <div className="border-2 border-slate-700 bg-slate-950 p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                  Invite Account
+                </p>
+                <p className="mt-2 break-all font-mono text-sm font-bold text-orange-200">
+                  {inviteIdentity || normalizeAuthIdentity(identity)}
+                </p>
+              </div>
+
+              <div>
+                <label className={labelStyle} htmlFor="invite-new-password">
+                  New Password
+                </label>
+                <input
+                  id="invite-new-password"
+                  name="roodha-invite-new-passcode"
+                  className={inputStyle}
+                  type="password"
+                  value={invitePassword}
+                  onChange={(event) => setInvitePassword(event.target.value)}
+                  placeholder="NEW_PASSWORD"
+                  autoComplete="new-password"
+                  disabled={isLoading}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className={labelStyle} htmlFor="invite-confirm-password">
+                  Confirm Password
+                </label>
+                <input
+                  id="invite-confirm-password"
+                  name="roodha-invite-confirm-passcode"
+                  className={inputStyle}
+                  type="password"
+                  value={invitePasswordConfirm}
+                  onChange={(event) => setInvitePasswordConfirm(event.target.value)}
+                  placeholder="CONFIRM_PASSWORD"
+                  autoComplete="new-password"
+                  disabled={isLoading}
+                  required
+                />
+              </div>
+
+              <button type="submit" className={primaryButtonStyle} disabled={isLoading}>
+                {isLoading ? <LoadingLabel>Setting Password</LoadingLabel> : 'Set Password & Sign In'}
+              </button>
+
+              <button
+                type="button"
+                className={secondaryButtonStyle}
+                disabled={isLoading}
+                onClick={() => switchView(AUTH_VIEWS.LOGIN)}
+              >
+                Back to Login
+              </button>
             </form>
           )}
 

@@ -657,6 +657,9 @@ export async function confirmResetPassword(params) {
 }
 
 export async function handleConfirmSignIn(challengeResponse) {
+  if (challengeResponse && typeof challengeResponse === 'object') {
+    return confirmSignIn(challengeResponse)
+  }
   return confirmSignIn({ challengeResponse })
 }
 
