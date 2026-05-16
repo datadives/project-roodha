@@ -76,6 +76,19 @@ Expected account:
 
 Do not run deployment commands until this succeeds.
 
+## Recommended CloudShell One-Command Deploy
+
+After opening CloudShell in account `918172959197`, run:
+
+```bash
+git clone https://github.com/roshandatadive/project-roodha.git
+cd project-roodha
+git checkout codex/saas-stabilization-live
+bash infrastructure-docs/scripts/roodha_cloudshell_deploy_latest.sh
+```
+
+The script deploys both the backend and frontend, then prints `DEPLOY_PASS` only after tests, EB health, S3 sync, and backend smoke checks complete.
+
 ## Backend Deploy Commands
 
 Run from CloudShell or a terminal with valid credentials:

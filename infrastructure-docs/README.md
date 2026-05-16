@@ -13,6 +13,7 @@ This folder contains non-secret AWS documentation and operational scripts for th
 
 - `scripts/roodha_aws_verify.sh` - read-only AWS verification.
 - `scripts/roodha_aws_repair.sh` - guarded AWS repair for Cognito, groups, EB permissions, and readiness.
+- `scripts/roodha_cloudshell_deploy_latest.sh` - CloudShell-safe backend and frontend deployment for the latest pushed branch.
 - `scripts/roodha_v15_eventbridge_setup.sh` - EventBridge trigger setup for protected maintenance endpoint.
 - `scripts/roodha_v15_live_e2e_smoke.py` - live smoke runner for V1.5 flows.
 - `scripts/roodha_enable_rls.sh` - RLS setup helper.
