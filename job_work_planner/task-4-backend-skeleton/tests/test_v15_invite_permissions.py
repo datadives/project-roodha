@@ -10,6 +10,7 @@ TENANT_ID = "tenant-invite-rbac-test"
 INVITE_EMAIL_RAW = "New.Supervisor@Example.COM"
 INVITE_EMAIL_NORMALIZED = "new.supervisor@example.com"
 INVITE_PAYLOAD = {"email": INVITE_EMAIL_RAW, "role": "SUPERVISOR"}
+OPERATOR_MACHINE_ID = "11111111-2222-4333-8444-555555555555"
 DEV_TOKEN = "roodha-dev-test-123"
 
 
@@ -156,5 +157,64 @@ def test_owner_can_invite_user_and_send_cognito_setup_email(monkeypatch, capsys)
 
     captured = capsys.readouterr().out
     assert "INVITE_RBAC_ALLOW role=OWNER status=200" in captured
+
+    main.app.dependency_overrides.clear()
+
+
+def test_owner_can_invite_operator_with_machine_assignment(monkeypatch, capsys):
+    fake_db = InviteFakeDB()
+    cognito_calls = []
+    client, main = build_invite_client(monkeypatch, fake_db, cognito_calls)
+
+    response = client.post(
+        "/api/users/invite",
+        json={
+            "name": "Ravi Operator",
+            "email": "Ravi.Operator@Example.COM",
+            "role": "OPERATOR",
+            "machine_id": OPERATOR_MACHINE_ID,
+        },
+        headers=invite_headers("OWNER"),
+    )
+
+    body = response.json()
+    created_user = next((record for record in fake_db.added if isinstance(record, User)), None)
+    create_call = next((payload for name, payload in cognito_calls if name == "admin_create_user"), None)
+    group_call = next((payload for name, payload in cognito_calls if name == "admin_add_user_to_group"), None)
+
+    print(
+        "INVITE_OPERATOR_ALLOW "
+        f"role=OWNER status={response.status_code} "
+        f"email={body['data']['email']} machine_id={body['data']['machine_id']}"
+    )
+
+    assert response.status_code == 200
+    assert body["success"] is True
+    assert body["message"] == "Employee invite sent"
+    assert body["data"]["email"] == "ravi.operator@example.com"
+    assert body["data"]["role"] == "OPERATOR"
+    assert body["data"]["machine_id"] == OPERATOR_MACHINE_ID
+
+    assert create_call is not None
+    assert create_call["DesiredDeliveryMediums"] == ["EMAIL"]
+    assert {"Name": "custom:tenant_id", "Value": TENANT_ID} in create_call["UserAttributes"]
+    assert {"Name": "custom:user_role", "Value": "OPERATOR"} in create_call["UserAttributes"]
+    assert {"Name": "custom:machine_id", "Value": OPERATOR_MACHINE_ID} in create_call["UserAttributes"]
+    assert {"Name": "name", "Value": "Ravi Operator"} in create_call["UserAttributes"]
+
+    assert group_call == {
+        "UserPoolId": "pool-invite-rbac-test",
+        "Username": "ravi.operator@example.com",
+        "GroupName": "OPERATOR",
+    }
+
+    assert created_user is not None
+    assert created_user.tenant_id == TENANT_ID
+    assert created_user.email == "ravi.operator@example.com"
+    assert created_user.role == "OPERATOR"
+    assert fake_db.commits == 1
+
+    captured = capsys.readouterr().out
+    assert "INVITE_OPERATOR_ALLOW role=OWNER status=200" in captured
 
     main.app.dependency_overrides.clear()

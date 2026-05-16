@@ -10,9 +10,11 @@
  */
 """
 import os
+import logging
 import secrets
 import string
 import boto3
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, Request, HTTPException, status
 from fastapi import Depends
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -26,6 +28,7 @@ from app.models import Tenant, User
 from app.routes.response_utils import api_success
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 class DevConfirmSignUp(BaseModel):
     email: EmailStr
@@ -93,6 +96,35 @@ def _cognito_attr(user: dict, name: str) -> str | None:
         if attribute.get("Name") == name:
             return attribute.get("Value")
     return None
+
+
+def _safe_cognito_error_code(exc: Exception) -> str:
+    if isinstance(exc, ClientError):
+        return str(exc.response.get("Error", {}).get("Code") or exc.__class__.__name__)
+    return exc.__class__.__name__
+
+
+def _invite_error_detail(exc: Exception) -> tuple[int, str]:
+    code = _safe_cognito_error_code(exc)
+    if code in {"AccessDeniedException", "NotAuthorizedException", "UnrecognizedClientException"}:
+        return (
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Cognito invite permissions are not configured for the backend.",
+        )
+    if code in {"InvalidParameterException", "ResourceNotFoundException"}:
+        return (
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Cognito invite configuration is incomplete. Check user pool attributes and groups.",
+        )
+    if code in {"CodeDeliveryFailureException", "InvalidEmailRoleAccessPolicyException", "LimitExceededException"}:
+        return (
+            status.HTTP_400_BAD_REQUEST,
+            "Cognito could not deliver the invite email. Check Cognito/SES email delivery.",
+        )
+    return (
+        status.HTTP_400_BAD_REQUEST,
+        "Could not create the Cognito invite. Check Cognito email delivery and permissions.",
+    )
 
 @router.post("/auth/dev-confirm-signup")
 async def dev_confirm_signup(payload: DevConfirmSignUp, request: Request):
@@ -297,14 +329,31 @@ async def invite_user(
                 GroupName=role,
             )
         except Exception as exc:
+            logger.warning(
+                "Cognito invite resend failed",
+                extra={
+                    "tenant_id": tenant_id,
+                    "invite_role": role,
+                    "cognito_error_code": _safe_cognito_error_code(exc),
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This user already exists. Ask them to sign in or reset their password.",
             ) from exc
     except Exception as exc:
+        logger.warning(
+            "Cognito invite failed",
+            extra={
+                "tenant_id": tenant_id,
+                "invite_role": role,
+                "cognito_error_code": _safe_cognito_error_code(exc),
+            },
+        )
+        status_code, detail = _invite_error_detail(exc)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not create the Cognito invite. Check Cognito email delivery and permissions.",
+            status_code=status_code,
+            detail=detail,
         ) from exc
 
     existing_user = await db.scalar(
