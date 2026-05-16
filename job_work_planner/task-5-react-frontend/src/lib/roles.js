@@ -51,7 +51,8 @@ const roleLabels = {
 }
 
 export function normalizeRole(role) {
-  return role ? role.toString().trim().toUpperCase() : ''
+  const normalizedRole = role ? role.toString().trim().toUpperCase() : ''
+  return normalizedRole === 'WORKER' ? 'OPERATOR' : normalizedRole
 }
 
 export function getRoleLabel(role) {
@@ -82,7 +83,7 @@ export function hasPermission(role, permission) {
 }
 
 export function getDefaultRouteForRole(role) {
-  return hasPermission(role, 'operatorDashboard') ? '/worklist' : '/dashboard'
+  return hasPermission(role, 'operatorDashboard') ? '/operator' : '/dashboard'
 }
 
 export function listAllowedRoleLabels(roles = []) {

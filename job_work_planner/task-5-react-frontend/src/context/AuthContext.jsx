@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
 import { getAuthContext, getCachedAuthContextSync, getStoredDevAuthContext, logout as libLogout } from '../lib/auth'
+import { normalizeRole } from '../lib/roles'
 
 const AuthContext = createContext({
   auth: null,
@@ -14,17 +15,20 @@ const AuthContext = createContext({
   refresh: () => {},
 })
 
-function normalizeContext(context) {
+export function normalizeContext(context) {
   if (!context) {
     return null
   }
 
-  const role = context.role || context.userRole || context.user_role || null
+  const role = normalizeRole(context.role || context.userRole || context.user_role)
   const tenantId = context.tenantId || context.tenant_id || null
   const machineId = context.machineId || context.machine_id || null
+  const token = context.token || null
+  const isAuthenticated = Boolean(token && tenantId && role)
 
   return {
     ...context,
+    token,
     role,
     userRole: role,
     user_role: role,
@@ -32,7 +36,7 @@ function normalizeContext(context) {
     tenant_id: tenantId,
     machineId,
     machine_id: machineId,
-    isAuthenticated: Boolean(context.isAuthenticated),
+    isAuthenticated,
   }
 }
 
@@ -68,6 +72,16 @@ export function AuthProvider({ children }) {
     authEpochRef.current += 1
     setAuth(null)
     setIsInitializing(false)
+    try {
+      localStorage.clear()
+    } catch {
+      // Ignore restricted storage contexts.
+    }
+    try {
+      sessionStorage.clear()
+    } catch {
+      // Ignore restricted storage contexts.
+    }
     await libLogout()
   }, [])
 

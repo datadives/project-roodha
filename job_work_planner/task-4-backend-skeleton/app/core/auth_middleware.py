@@ -246,6 +246,14 @@ async def _decode_verified_token(token: str) -> dict:
 # --- TENANT & USER PROVISIONING ---
 # ---------------------------------------------------------
 
+def _normalize_role(role: object) -> str:
+    normalized_role = str(role or "").strip().upper()
+    if normalized_role == "WORKER":
+        return "OPERATOR"
+    if normalized_role in {"OWNER", "SUPERVISOR", "OPERATOR"}:
+        return normalized_role
+    return "OPERATOR"
+
 def _identity_fields_from_claims(payload: dict) -> dict:
     groups = payload.get("cognito:groups") or []
     role = (
@@ -267,7 +275,7 @@ def _identity_fields_from_claims(payload: dict) -> dict:
         "email": payload.get("email") or payload.get("username") or "",
         "company_name": payload.get("custom:company_name") or tenant_id,
         "machine_id": payload.get("custom:machine_id") or payload.get("machine_id"),
-        "role": str(role).upper(),
+        "role": _normalize_role(role),
     }
 
 def _build_short_code_seed(tenant_id: str) -> str:
@@ -309,7 +317,7 @@ async def _ensure_tenant_exists(db, tenant_id: str, company_name: str) -> str:
 async def _user_from_claims(payload: dict) -> dict | None:
     """Maps Cognito claims to the internal application User model."""
     identity = _identity_fields_from_claims(payload)
-    role = identity["role"]
+    claim_role = identity["role"]
     tenant_id = identity["tenant_id"]
     user_id = identity["user_id"]
     user_email = identity["email"]
@@ -332,23 +340,31 @@ async def _user_from_claims(payload: dict) -> dict | None:
                 ),
             )
         )
-        db_role = db_user.role if db_user else None
+        db_role = _normalize_role(db_user.role) if db_user else None
         if not db_role:
             db.add(
                 User(
                     tenant_id=tenant_id,
                     user_id=user_id,
                     email=user_email,
-                    role=str(role).upper(),
+                    role=claim_role,
                 )
             )
             await db.commit()
-            db_role = str(role).upper()
+            db_role = claim_role
         elif db_user and db_user.user_id != user_id:
             db_user.user_id = user_id
             await db.commit()
 
-    effective_role = str(db_role or role).upper()
+    effective_role = _normalize_role(db_role or claim_role)
+    if claim_role != effective_role:
+        logger.warning(
+            "Cognito role claim differs from DB role; using DB role user=%s tenant=%s claim_role=%s db_role=%s",
+            str(user_id)[:8],
+            tenant_id,
+            claim_role,
+            effective_role,
+        )
 
     return {
         "user_id": user_id,
@@ -389,8 +405,8 @@ def role_required(allowed_roles: List[str]) -> Callable:
             if not user:
                 return _unauthorized("Authentication required")
 
-            user_role = str(user.get("role", "")).upper()
-            if user_role not in [role.upper() for role in allowed_roles]:
+            user_role = _normalize_role(user.get("role", ""))
+            if user_role not in [_normalize_role(role) for role in allowed_roles]:
                 return _forbidden(f"Role '{user_role}' unauthorized for this action")
 
             return await func(*args, **kwargs)
@@ -408,7 +424,7 @@ def require_roles(allowed_roles: List[str]) -> Callable:
     The JWT middleware must already have validated the Cognito ID token and
     populated request.state.user from the custom:role/custom:user_role claim.
     """
-    normalized_allowed_roles = {str(role).upper() for role in allowed_roles}
+    normalized_allowed_roles = {_normalize_role(role) for role in allowed_roles}
 
     def dependency(request: Request) -> dict:
         user = getattr(request.state, "user", None)
@@ -418,7 +434,7 @@ def require_roles(allowed_roles: List[str]) -> Callable:
                 detail="Authentication required",
             )
 
-        user_role = str(user.get("role") or "").upper()
+        user_role = _normalize_role(user.get("role") or "")
         if user_role not in normalized_allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -1113,7 +1129,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
                 "tenant_id": tenant_id,
                 "tenant_short_code": "DEV",
                 "company_name": "Dev Company",
-                "role": (request.headers.get("X-Dev-Role") or "OWNER").upper(),
+                "role": _normalize_role(request.headers.get("X-Dev-Role") or "OWNER"),
             }
         else:
             if token.count(".") != 2:

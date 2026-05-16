@@ -9,7 +9,7 @@
  */
 
 import { fetchAuthSession } from 'aws-amplify/auth'
-import { getLatestAuthContextForRequest } from './auth'
+import { getLatestAuthContextForRequest, refreshAuthSession } from './auth'
 import { keysToCamel, keysToSnake } from './caseTransformer'
 import { CONFIG } from '../config'
 
@@ -26,11 +26,13 @@ export class APIError extends Error {
 }
 
 const BASE_URL = CONFIG.BASE_URL
+const RETRY_DELAY_MS = 2_000
 
 
 interface FetchOptions extends RequestInit {
   transformPayload?: boolean
   transformResponse?: boolean
+  params?: Record<string, unknown>
 }
 
 function isUsableToken(token: unknown): token is string {
@@ -60,18 +62,72 @@ async function getRequestAuthContext(): Promise<any> {
   return auth
 }
 
+function clearStaleAuthAndRedirect() {
+  try {
+    localStorage.clear()
+  } catch {
+    // Ignore storage access failures.
+  }
+  try {
+    sessionStorage.clear()
+  } catch {
+    // Ignore storage access failures.
+  }
+  if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+    window.location.replace('/login')
+  }
+}
+
+function decodeJwtPayload(token: string): Record<string, any> {
+  if (!isUsableToken(token)) return {}
+  const parts = token.split('.')
+  if (parts.length < 2) return {}
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    return JSON.parse(atob(padded))
+  } catch {
+    return {}
+  }
+}
+
+function deriveTenantIdFromToken(token: string): string {
+  const payload = decodeJwtPayload(token)
+  return String(payload['custom:tenant_id'] || payload.tenant_id || payload.tenantId || '')
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 /**
  * Resilient authenticated fetch utility with automated case transformation.
  */
 export async function authenticatedFetch<T = any>(
   endpoint: string, 
-  options: FetchOptions = {}
+  options: FetchOptions = {},
+  retryCount = 0,
 ): Promise<T> {
-  const { transformPayload = true, transformResponse = true, ...fetchOptions } = options
+  const { transformPayload = true, transformResponse = true, params, ...fetchOptions } = options
   
-  const url = endpoint.startsWith('http') 
+  const baseUrl = endpoint.startsWith('http') 
     ? endpoint 
     : `${BASE_URL.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`
+
+  const query = new URLSearchParams()
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      query.append(key, String(value))
+    }
+  })
+  const url = query.toString()
+    ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}${query.toString()}`
+    : baseUrl
+
+  if (url.includes('amazonaws.com') || url.includes('amazoncognito.com')) {
+    const response = await fetch(url, fetchOptions)
+    return response.json() as Promise<T>
+  }
   
   const auth = await getRequestAuthContext()
   const headers = new Headers({
@@ -82,6 +138,10 @@ export async function authenticatedFetch<T = any>(
   const token = typeof auth?.token === 'string' ? auth.token.trim() : ''
   if (isUsableToken(token)) {
     headers.set('Authorization', `Bearer ${token}`)
+  }
+  const tenantId = auth?.tenantId || auth?.tenant_id || deriveTenantIdFromToken(token)
+  if (tenantId) {
+    headers.set('X-Tenant-ID', String(tenantId))
   }
 
   // 1. Transform payload to snake_case for backend
@@ -107,6 +167,30 @@ export async function authenticatedFetch<T = any>(
     }
 
     let data = await response.json().catch(() => ({}))
+
+    if (response.status === 401 && retryCount === 0) {
+      try {
+        await refreshAuthSession()
+      } catch {
+        // Retry once using whatever token recovery can provide.
+      }
+      return authenticatedFetch<T>(endpoint, options, 1)
+    }
+
+    if (response.status === 401) {
+      clearStaleAuthAndRedirect()
+      throw new APIError('This session expired. Please sign in again.', response.status, data)
+    }
+
+    if (response.status === 403) {
+      clearStaleAuthAndRedirect()
+      throw new APIError('Your role or access changed. Please sign in again.', response.status, data)
+    }
+
+    if (response.status >= 500 && retryCount === 0) {
+      await sleep(RETRY_DELAY_MS)
+      return authenticatedFetch<T>(endpoint, options, 1)
+    }
 
     if (!response.ok) {
       const errorMsg = data?.detail || data?.message || response.statusText || 'Request failed'

@@ -44,8 +44,12 @@ const RETRY_DELAY_MS = 2_000
 
 function clearStaleAuthAndRedirect() {
   try {
-    localStorage.removeItem('token')
-    localStorage.removeItem('roodha_auth_context')
+    localStorage.clear()
+  } catch {
+    // Ignore storage access failures.
+  }
+  try {
+    sessionStorage.clear()
   } catch {
     // Ignore storage access failures.
   }
@@ -283,6 +287,7 @@ export async function authenticatedFetch(endpoint, options = {}, _retryCount = 0
     }
 
     if (response.status === 401) {
+      clearStaleAuthAndRedirect()
       throw new APIError('This feed is not authorized for the current session. Please refresh or sign in again if all feeds fail.', 401, data)
     }
 

@@ -24,7 +24,7 @@ import WorklistPage from './pages/WorklistPage'
 import LoginPage from './pages/LoginPage'
 import { CONFIG } from './config'
 import { useAuth } from './context/AuthContext'
-import { getDefaultRouteForRole, hasAnyRole, listAllowedRoleLabels } from './lib/roles'
+import { getDefaultRouteForRole, hasAnyRole, listAllowedRoleLabels, normalizeRole } from './lib/roles'
 import ErrorBoundary from './components/common/ErrorBoundary'
 
 function ProtectedRoute({ allowedRoles = [] }) {
@@ -74,14 +74,15 @@ function RoleRoute({ allowedRoles, title, message }) {
 
 function HomeRoute() {
   const auth = useOutletContext()
+  const userRole = normalizeRole(auth?.userRole)
 
   // Role-Based Navigation Guard
-  if (auth?.userRole === 'OPERATOR') {
+  if (userRole === 'OPERATOR') {
     return <Navigate to="/operator" replace />
   }
 
-  if (!hasAnyRole(auth?.userRole, ['OWNER', 'SUPERVISOR'])) {
-    return <Navigate to={getDefaultRouteForRole(auth?.userRole)} replace />
+  if (!hasAnyRole(userRole, ['OWNER', 'SUPERVISOR'])) {
+    return <Navigate to={getDefaultRouteForRole(userRole)} replace />
   }
 
   return <DashboardPage auth={auth} />
@@ -106,7 +107,7 @@ export default function App() {
           />
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>
-              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route index element={<HomeRoute />} />
               <Route
                 path="/unauthorized"
                 element={
@@ -121,7 +122,7 @@ export default function App() {
               <Route
                 element={<ProtectedRoute allowedRoles={['OPERATOR']} />}
               >
-                <Route path="/operator" element={<DashboardPage />} />
+                <Route path="/operator" element={<WorklistPage />} />
               </Route>
               <Route path="/worklist" element={<WorklistPage />} />
               <Route
