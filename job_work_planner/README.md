@@ -1,25 +1,50 @@
-# Project Roodha: Job Work Planner
+# Roodha Job Work Planner
 
-## Overview
-This repository contains a full-stack job work planning application with a Python backend, a React frontend, and AWS deployment configuration.
+This folder contains the deployable Roodha application:
 
-## Structure
-- `task-4-backend-skeleton/` — Python backend (FastAPI, Alembic, Docker, AWS CodeBuild)
-- `task-5-react-frontend/` — React frontend (Vite, Tailwind CSS, S3/Amplify ready)
-- `AWS-DEPLOYMENT.md` — AWS deployment guide
-- `setup_local_dev.py` — Script for local development setup
-- `Backend/`, `Frontend/` — (Unused or legacy, clean up if not needed)
+- `task-4-backend-skeleton/` - FastAPI backend, Alembic migrations, RDS data model, Cognito auth, V1.5 planning/notification/export APIs, and pytest coverage.
+- `task-5-react-frontend/` - React/Vite frontend for Owner, Supervisor, and Operator workflows.
+- `AWS-DEPLOYMENT.md` - AWS deployment guide for the current Elastic Beanstalk/S3/RDS stack.
+- `setup_local_dev.py` - local setup helper.
 
-## Quick Start
-See the `README.md` files in each main folder for setup instructions.
+## Live System
 
-## AWS Deployment
-See `AWS-DEPLOYMENT.md` for full deployment instructions for both backend and frontend.
+- Frontend: http://roodha-v1-live-918172959197.s3-website.ap-south-1.amazonaws.com
+- Backend: http://roodha-backend-env.eba-52xsapkh.ap-south-1.elasticbeanstalk.com
+- Health: http://roodha-backend-env.eba-52xsapkh.ap-south-1.elasticbeanstalk.com/api/ping
 
-## Cleaning & Best Practices
-- Do not commit `node_modules`, `__pycache__`, `.env`, or database files.
-- Use `.gitignore` files to keep the repo clean.
+## Local Start
 
----
+Backend:
 
-For more details, see the backend, frontend, and AWS deployment guides.
+```powershell
+cd task-4-backend-skeleton
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+$env:PYTHONPATH='.'
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Frontend:
+
+```powershell
+cd task-5-react-frontend
+npm install
+npm run dev
+```
+
+## Verification
+
+```powershell
+cd task-4-backend-skeleton
+$env:PYTHONPATH='.'
+pytest -q
+Remove-Item Env:\PYTHONPATH
+
+cd ..\task-5-react-frontend
+npm test -- --run
+npm run build
+```
+
+Do not commit `.env`, `.env.local`, AWS credential CSV files, `node_modules`, `dist`, caches, logs, or EB bundles.

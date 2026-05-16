@@ -1,6 +1,13 @@
 # Roodha Frontend
 
-React/Vite frontend for the Roodha manufacturing job planner.
+React/Vite frontend for the Roodha manufacturing job planner. The production build is hosted from the S3 website bucket `roodha-v1-live-918172959197`.
+
+## Core Screens
+
+- Owner: dashboard, jobs, planning, master data, analytics, users, settings, notifications, and exports.
+- Supervisor: jobs, planning, work queues, master data, analytics, and notifications.
+- Operator: restricted work execution and alerts.
+- V1.5: Auto Plan preview/apply, Work-to-List queues, notification bell, custom fields, tags, and CSV export actions.
 
 ## Local Setup
 
@@ -19,7 +26,6 @@ VITE_COGNITO_USER_POOL_ID=ap-south-1_U3JeTevgw
 VITE_COGNITO_CLIENT_ID=3ab798pg0k2p8hp7v6bbtlh4mj
 VITE_ENABLE_SELF_SIGNUP=true
 VITE_ALLOW_DEV_PASS=true
-VITE_DEV_PASS_TOKEN=roodha-dev-test-123
 VITE_DEV_TENANT_ID=lalafactory
 ```
 
@@ -32,12 +38,12 @@ For production builds, set `VITE_ALLOW_DEV_PASS=false` and keep demo login hidde
 3. Owner invites Supervisor and Operator users.
 4. Supervisor creates/reviews jobs and plans operations.
 5. Operator views assigned work and updates progress.
-6. Dashboard, kanban, analytics, costing, and CSV exports reflect real backend data.
+6. Dashboard, kanban, analytics, costing, notifications, and CSV exports reflect backend data.
 
 ## Verification
 
 ```powershell
-npm test -- --run src/pages/LoginPage.test.js src/lib/auth.test.js src/config.test.js
+npm test -- --run
 npm run build
 ```
 
@@ -45,8 +51,10 @@ Browser checks:
 
 - Login/create/recover screens fit on mobile and desktop.
 - Jobs can be created without `Section Offline`.
-- Analytics shows WIP and costing after real jobs exist.
-- Jobs CSV and machine-load CSV export download.
+- Auto Plan preview renders and can be accepted.
+- Work-to-List supports start/complete flow for assigned operations.
+- Analytics shows WIP, on-time, and costing after real jobs exist.
+- CSV exports download.
 - Operator navigation does not expose owner-only actions.
 
 ## UI Notes

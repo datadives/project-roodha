@@ -1,5 +1,24 @@
-Store the automatically generated AWS CloudShell JSON configurations (roodha-db-infrastructure.json and roodha-security-infrastructure.json) in this folder for compliance and auditing.
+# Roodha Infrastructure Docs
 
-Additional living documents:
-- `aws-infrastructure-map.md`: current non-secret AWS topology and app wiring
-- `cloudshell-cognito-repair.sh`: one-shot CloudShell helper to repair Cognito account state and OTP delivery flow
+This folder contains non-secret AWS documentation and operational scripts for the Roodha V1.5 deployment.
+
+## Main Documents
+
+- `ROODHA_V15_RUNBOOK.md` - production runbook for backend, frontend, RDS, Cognito, SES readiness, deployment, verification, and rollback.
+- `aws-infrastructure-map.md` - current non-secret AWS topology and app wiring.
+- `V1_5_CRON_SETUP.md` - scheduled maintenance/EventBridge notes.
+
+## Scripts
+
+- `scripts/roodha_aws_verify.sh` - read-only AWS verification.
+- `scripts/roodha_aws_repair.sh` - guarded AWS repair for Cognito, groups, EB permissions, and readiness.
+- `scripts/roodha_v15_eventbridge_setup.sh` - EventBridge trigger setup for protected maintenance endpoint.
+- `scripts/roodha_v15_live_e2e_smoke.py` - live smoke runner for V1.5 flows.
+- `scripts/roodha_enable_rls.sh` - RLS setup helper.
+- `cloudshell-cognito-repair.sh` and `cloudshell-aws-cleanup-and-db-fix.sh` - older CloudShell helpers retained for historical recovery scenarios.
+
+## Safety Rules
+
+- Do not commit AWS access-key CSV files, `.env` files, generated EB bundles, or command output containing secrets.
+- Prefer `roodha_aws_verify.sh` before any repair script.
+- SES production access and verified sender/domain setup are AWS account readiness items; do not claim email delivery is fully production-ready until AWS confirms them.

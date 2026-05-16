@@ -1,6 +1,15 @@
 # Roodha Backend
 
-FastAPI backend for the Roodha multi-tenant manufacturing job planner.
+FastAPI backend for the Roodha multi-tenant manufacturing job planner. The current production deployment runs on Elastic Beanstalk and connects to AWS RDS PostgreSQL.
+
+## Core Responsibilities
+
+- Cognito JWT authentication and tenant context enforcement.
+- Owner, Supervisor, and Operator role checks.
+- Master data, jobs, job operations, kanban, metrics, and costing APIs.
+- V1.5 planning APIs for Auto Scheduler preview/apply.
+- V1.5 Work-to-List, notifications, exports, custom fields, integration webhook, and maintenance endpoints.
+- Alembic migrations for repeatable RDS schema changes.
 
 ## Local Setup
 
@@ -9,6 +18,7 @@ cd job_work_planner\task-4-backend-skeleton
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+$env:PYTHONPATH='.'
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -22,7 +32,7 @@ COGNITO_REGION=ap-south-1
 COGNITO_USER_POOL_ID=ap-south-1_U3JeTevgw
 COGNITO_APP_CLIENT_ID=3ab798pg0k2p8hp7v6bbtlh4mj
 ALLOW_DEV_PASS=true
-DEV_PASS_TOKEN=roodha-dev-test-123
+DEV_PASS_TOKEN=<local-dev-token>
 DEV_TENANT_ID=lalafactory
 ```
 
@@ -46,9 +56,30 @@ curl /api/debug/db-check
 
 Supervisor and operator users are created through `/api/users/invite`; the route writes Cognito attributes/groups and mirrors the user in PostgreSQL.
 
+## V1.5 APIs
+
+- Planning: `/api/planning/auto-schedule/preview`, `/api/planning/auto-schedule/apply`.
+- Work queues: `/api/worklist`.
+- Notifications: `/api/notifications`.
+- Exports: `/api/exports/jobs`, `/api/exports/machine-load`, `/api/exports/wip-by-stage`, `/api/exports/costing-summary`, `/api/exports/delivery-performance`.
+- Custom fields: `/api/custom-fields`.
+- Integrations: `/api/integrations/jobs`.
+- Maintenance: `/api/maintenance/v15-nightly`, `/api/maintenance/batch-costing`.
+
 ## CSV Export
 
-Jobs and machine-load exports return a downloadable URL. If `S3_BUCKET_NAME` is unset, the backend returns a `data:text/csv` URL so local/client demos continue to work. For production at larger scale, configure S3 and replace this with pre-signed object URLs.
+Exports return a downloadable URL. If `EXPORTS_S3_BUCKET` is configured, the backend returns a short-lived S3 pre-signed URL. If it is unset, local/demo mode returns a `data:text/csv` URL.
+
+## Helper Scripts
+
+The scripts under `scripts/` are retained intentionally:
+
+- `create_tables.py`, `create_db.py`, `build_db.py` - local/RDS initialization helpers for controlled setup.
+- `seed_test_data.py` - demo data helper.
+- `quick_check.py`, `api_battle_test.py` - smoke/debug helpers.
+- `onboard_client.py` - client onboarding helper.
+
+Do not run destructive setup scripts against production unless the runbook explicitly says to do so.
 
 ## Tests
 
@@ -65,3 +96,4 @@ Minimum client-ready checks:
 - `/api/users/me` role preservation.
 - Job create -> kanban -> metrics -> analytics flow.
 - Owner/Supervisor/Operator access restrictions.
+- V1.5 planning, worklist, notifications, exports, custom fields, and integration tests.
